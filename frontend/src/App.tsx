@@ -1,0 +1,503 @@
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import {
+  Activity,
+  ArrowUpRight,
+  BriefcaseBusiness,
+  CheckCircle2,
+  ChevronDown,
+  CircleHelp,
+  Clock3,
+  CalendarDays,
+  LayoutDashboard,
+  Moon,
+  PanelLeft,
+  Search,
+  Sun,
+  UsersRound,
+} from "lucide-react";
+import { cacheAttendance, cacheLeave, cacheSession, cacheShifts, cacheTasks, discardOperation, getCachedSession, getLocalAttendance, getLocalLeave, getLocalShifts, getLocalTasks, getOutboxStatuses, initializeLocalDb, queueOperation, retryOperation, syncPendingOperations, type LocalAttendance, type LocalLeave, type LocalShift, type LocalTask } from "./localDb";
+
+type Theme = "light" | "dark";
+type SystemHealth = { status: string; database: string };
+type Organization = { id: string; name: string; slug: string };
+type AuthState = "loading" | "setup" | "login" | "authenticated";
+type CurrentUser = { name: string; email: string; organization: string; role: string; permissions?: string[] };
+type UserRecord = { id: string; email: string; display_name: string; status: string };
+type DepartmentRecord = { id: string; name: string; slug: string };
+type LeaveRequest = { id: string; requested_by: string; display_name?: string; leave_type: string; start_date: string; end_date: string; reason: string; status: string };
+type RoleRecord = { id: string; code: string; name: string; permissions: string[] };
+type PermissionRecord = { code: string; description: string };
+type AuditEntry = { id: string; action: string; entity_type: string; entity_id: string; actor_name: string; created_at: string };
+
+const apiBase = "http://localhost:8080/api/v1";
+
+const navigation = [
+  { label: "Overview", icon: LayoutDashboard, active: true },
+  { label: "Work", icon: BriefcaseBusiness, permission: "tasks.read" },
+  { label: "Attendance", icon: Clock3, permission: "attendance.read" },
+  { label: "Leave", icon: CalendarDays, permission: "leave.read" },
+  { label: "Schedule", icon: CalendarDays, permission: "shifts.read" },
+  { label: "People", icon: UsersRound, permission: "users.read" },
+  { label: "Activity", icon: Activity, permission: "organization.read" },
+];
+
+function App() {
+  const [theme, setTheme] = useState<Theme>(() => {
+    return (localStorage.getItem("name-theme") as Theme) || "dark";
+  });
+  const [systemHealth, setSystemHealth] = useState<SystemHealth>({ status: "offline", database: "unknown" });
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [authState, setAuthState] = useState<AuthState>("loading");
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [activeView, setActiveView] = useState("overview");
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("name-theme", theme);
+  }, [theme]);
+
+  useEffect(() => {
+    const loadWorkspace = async () => {
+      try {
+        await initializeLocalDb();
+      } catch {
+        // Browser development mode can run without the native Tauri SQLite plugin.
+      }
+      try {
+        const healthResponse = await fetch(`${apiBase}/health`);
+        if (!healthResponse.ok) throw new Error("Backend unavailable");
+        setSystemHealth(await healthResponse.json());
+
+        const setupResponse = await fetch(`${apiBase}/setup/status`);
+        if (setupResponse.ok && (await setupResponse.json()).needs_setup) {
+          setAuthState("setup");
+          return;
+        }
+
+        const meResponse = await fetch(`${apiBase}/auth/me`, { credentials: "include" });
+        if (meResponse.ok) {
+          setCurrentUser(await meResponse.json());
+          setAuthState("authenticated");
+        } else {
+          setAuthState("login");
+        }
+
+        const organizationsResponse = await fetch(`${apiBase}/organizations`);
+        if (organizationsResponse.ok) setOrganizations(await organizationsResponse.json());
+      } catch {
+        setSystemHealth({ status: "offline", database: "unavailable" });
+        try {
+          const cached = await getCachedSession();
+          if (cached) {
+            setCurrentUser({ name: cached.displayName, email: cached.email, organization: cached.organization, role: cached.role, permissions: cached.permissions });
+            setAuthState("authenticated");
+            return;
+          }
+        } catch {
+          // No local database is available yet.
+        }
+        setAuthState("login");
+      }
+    };
+
+    void loadWorkspace();
+  }, []);
+
+  const toggleTheme = () => setTheme((current) => (current === "dark" ? "light" : "dark"));
+  const handleAuthenticated = async (user: CurrentUser) => {
+    setCurrentUser(user);
+    setAuthState("authenticated");
+    try {
+      await cacheSession({ email: user.email, displayName: user.name, organization: user.organization, role: user.role, permissions: user.permissions ?? [], cachedAt: new Date().toISOString() });
+      await syncPendingOperations(apiBase);
+    } catch {
+      // Keep online auth working when running the frontend outside Tauri or offline.
+    }
+  };
+
+  if (authState === "loading") return <LoadingScreen />;
+  if (authState === "setup" || authState === "login") {
+    return <AuthScreen mode={authState} theme={theme} onThemeToggle={toggleTheme} onAuthenticated={handleAuthenticated} />;
+  }
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand-mark">N</div>
+        <div className="workspace-switcher">
+          <span className="workspace-avatar">A</span>
+          <span className="workspace-name">Acme workspace</span>
+          <ChevronDown size={15} />
+        </div>
+
+        <nav className="primary-nav" aria-label="Primary navigation">
+          <p className="eyebrow">Workspace</p>
+          {navigation.filter(({ permission }) => !permission || !currentUser?.permissions?.length || currentUser.permissions.includes(permission)).map(({ label, icon: Icon, active }) => (
+            <button className={`nav-item ${(activeView === "overview" && active) || (activeView === "people" && label === "People") || (activeView === "work" && label === "Work") || (activeView === "attendance" && label === "Attendance") || (activeView === "leave" && label === "Leave") || (activeView === "schedule" && label === "Schedule") || (activeView === "activity" && label === "Activity") ? "active" : ""}`} key={label} type="button" onClick={() => setActiveView(label === "People" ? "people" : label === "Work" ? "work" : label === "Attendance" ? "attendance" : label === "Leave" ? "leave" : label === "Schedule" ? "schedule" : label === "Activity" ? "activity" : "overview")}>
+              <Icon size={17} strokeWidth={1.8} />
+              <span>{label}</span>
+            </button>
+          ))}
+        </nav>
+
+        <div className="sidebar-footer">
+          <button className="nav-item" type="button">
+            <CircleHelp size={17} strokeWidth={1.8} />
+            <span>Help center</span>
+          </button>
+          <div className="profile-row">
+            <span className="profile-avatar">L</span>
+            <span className="profile-copy"><strong>Lucas</strong><small>Administrator</small></span>
+            <PanelLeft size={15} />
+          </div>
+        </div>
+      </aside>
+
+      <main className="main-content">
+        <header className="topbar">
+          <div className="breadcrumb">Overview <span>/</span> Workspace</div>
+          <div className="topbar-actions">
+            <button className="search-button" type="button"><Search size={16} /> Search <kbd>⌘ K</kbd></button>
+            <span className={`status-dot ${systemHealth.status !== "ok" ? "offline" : ""}`} title={`Backend: ${systemHealth.status} · Database: ${systemHealth.database}`} />
+          </div>
+        </header>
+
+        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "attendance" ? <AttendanceView /> : activeView === "leave" ? <LeaveView /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : <section className="content-wrap">
+          <div className="page-heading">
+            <div>
+              <p className="eyebrow">Wednesday, 20 August 2026</p>
+              <h1>Good morning, Lucas.</h1>
+              <p className="lede">Here is what is happening across your workspace.</p>
+            </div>
+            <button className="primary-button" type="button">Open workspace <ArrowUpRight size={16} /></button>
+          </div>
+
+          <div className="connection-strip">
+            <span className={`connection-icon ${systemHealth.status === "ok" ? "ready" : "offline"}`}><Activity size={15} /></span>
+            <span><strong>{organizations[0]?.name ?? currentUser?.organization ?? "Company setup"}</strong><small>{systemHealth.status === "ok" ? `Backend connected · PostgreSQL ${systemHealth.database}` : "Start the local backend to connect this workspace"}</small></span>
+          </div>
+
+          <div className="metric-grid">
+            <Metric label="Open work" value="24" change="+8.4%" detail="from last week" />
+            <Metric label="People active" value="18" change="+3" detail="this morning" />
+            <Metric label="Approvals" value="07" change="2 urgent" detail="need your attention" warning />
+          </div>
+
+          <div className="section-heading">
+            <div><p className="eyebrow">Today</p><h2>Keep the company moving.</h2></div>
+            <button className="text-button" type="button">View activity <ArrowUpRight size={15} /></button>
+          </div>
+
+          <div className="activity-list">
+            <ActivityRow icon={<CheckCircle2 size={18} />} title="Platform foundation is ready to begin" detail="Engineering · just now" />
+            <ActivityRow icon={<BriefcaseBusiness size={18} />} title="Architecture decision recorded" detail="Workspace · 12 minutes ago" />
+            <ActivityRow icon={<UsersRound size={18} />} title="Organization structure is waiting for setup" detail="People · 24 minutes ago" />
+          </div>
+        </section>}
+      </main>
+
+      <button className="theme-switcher" type="button" onClick={toggleTheme} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}>
+        {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+        <span>{theme === "dark" ? "Light" : "Dark"}</span>
+      </button>
+    </div>
+  );
+}
+
+function WorkView() {
+  const [tasks, setTasks] = useState<LocalTask[]>([]);
+  const [outboxStatuses, setOutboxStatuses] = useState<Map<string, string>>(new Map());
+  const [title, setTitle] = useState("");
+  const [priority, setPriority] = useState("normal");
+  const [dueAt, setDueAt] = useState("");
+  const [assignedTo, setAssignedTo] = useState("");
+  const [recurrenceRule, setRecurrenceRule] = useState("");
+  const [taskScope, setTaskScope] = useState("organization");
+  const [users, setUsers] = useState<UserRecord[]>([]);
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [commentTaskId, setCommentTaskId] = useState<string | null>(null);
+  const [comments, setComments] = useState<Array<{ id: string; author_name: string; body: string }>>([]);
+  const [commentBody, setCommentBody] = useState("");
+
+  useEffect(() => {
+    const loadTasks = async () => {
+      try {
+        await syncPendingOperations(apiBase);
+        const response = await fetch(`${apiBase}/tasks?scope=${taskScope}`, { credentials: "include" });
+        if (!response.ok) throw new Error("offline");
+        const remoteTasks = await response.json() as Array<Record<string, string>>;
+        const normalized = remoteTasks.map((task) => ({ id: task.id, title: task.title, description: task.description ?? "", status: task.status, priority: task.priority, dueAt: task.due_at ?? null, assignedTo: task.assigned_to ?? null, recurrenceRule: task.recurrence_rule ?? null, recurrenceNextAt: task.recurrence_next_at ?? null, createdAt: task.created_at, updatedAt: task.updated_at }));
+        setTasks(normalized);
+        await cacheTasks(normalized);
+        const usersResponse = await fetch(`${apiBase}/users`, { credentials: "include" }); if (usersResponse.ok) setUsers(await usersResponse.json());
+      } catch {
+        try { setTasks(await getLocalTasks()); } catch { setTasks([]); }
+      }
+    };
+    void loadTasks();
+    const handleOnline = () => { void loadTasks(); };
+    window.addEventListener("online", handleOnline);
+    return () => window.removeEventListener("online", handleOnline);
+  }, [taskScope]);
+
+  useEffect(() => {
+    void getOutboxStatuses(tasks.map((task) => task.id)).then(setOutboxStatuses).catch(() => undefined);
+  }, [tasks]);
+
+  const retryTask = async (taskId: string) => {
+    await retryOperation(taskId);
+    setOutboxStatuses((current) => new Map(current).set(taskId, "pending"));
+    try { await syncPendingOperations(apiBase); } catch { /* remain pending while offline */ }
+    const refreshed = await getLocalTasks();
+    setTasks(refreshed);
+  };
+
+  const discardTask = async (taskId: string) => {
+    await discardOperation(taskId);
+    setOutboxStatuses((current) => { const next = new Map(current); next.delete(taskId); return next; });
+  };
+
+  const openComments = async (taskId: string) => { setCommentTaskId(taskId); const response = await fetch(`${apiBase}/tasks/${taskId}/comments`, { credentials: "include" }); if (response.ok) setComments(await response.json()); };
+  const addComment = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!commentTaskId || !commentBody.trim()) return; const response = await fetch(`${apiBase}/tasks/${commentTaskId}/comments`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body: commentBody }) }); if (response.ok) { const created = await response.json(); setComments((current) => [...current, created]); setCommentBody(""); } };
+
+  const createTask = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!title.trim()) return;
+    setSaving(true);
+    setMessage("");
+    const now = new Date().toISOString();
+    const recurrenceNextAt = recurrenceRule && dueAt ? new Date(`${dueAt}T23:59:00`).toISOString() : null;
+    const localTask: LocalTask = { id: crypto.randomUUID(), title: title.trim(), description: "", status: "todo", priority, dueAt: dueAt ? new Date(`${dueAt}T23:59:00`).toISOString() : null, assignedTo: assignedTo || null, recurrenceRule: recurrenceRule || null, recurrenceNextAt, createdAt: now, updatedAt: now };
+    try {
+      const response = await fetch(`${apiBase}/tasks`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: localTask.title, priority: localTask.priority, due_at: localTask.dueAt, assigned_to: localTask.assignedTo, recurrence_rule: localTask.recurrenceRule, recurrence_next_at: localTask.recurrenceNextAt }) });
+      if (!response.ok) throw new Error("offline");
+      const remote = await response.json() as Record<string, string>;
+      const saved: LocalTask = { id: remote.id, title: remote.title, description: remote.description ?? "", status: remote.status, priority: remote.priority, dueAt: remote.due_at ?? null, assignedTo: remote.assigned_to ?? null, recurrenceRule: remote.recurrence_rule ?? null, recurrenceNextAt: remote.recurrence_next_at ?? null, createdAt: remote.created_at, updatedAt: remote.updated_at };
+      setTasks((current) => [saved, ...current]);
+      await cacheTasks([saved]);
+      setMessage("Task created");
+    } catch {
+      await queueOperation({ id: localTask.id, entity: "task", action: "create", payload: { id: localTask.id, title: localTask.title, priority: localTask.priority, status: localTask.status, description: "", due_at: localTask.dueAt, assigned_to: localTask.assignedTo, recurrence_rule: localTask.recurrenceRule, recurrence_next_at: localTask.recurrenceNextAt }, createdAt: now });
+      await cacheTasks([localTask]);
+      setTasks((current) => [localTask, ...current]);
+      setMessage("Saved offline · will sync when the server is reachable");
+    } finally {
+      setTitle("");
+      setDueAt(""); setAssignedTo(""); setRecurrenceRule("");
+      setSaving(false);
+    }
+  };
+
+  return <section className="content-wrap">
+    <div className="page-heading"><div><p className="eyebrow">Work</p><h1>Keep work moving.</h1><p className="lede">Tasks stay available on this device, even when the company server is offline.</p></div></div>
+    {message && <p className="inline-message">{message}</p>}
+    <form className="task-composer" onSubmit={createTask}><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What needs to get done?" required /><select value={priority} onChange={(event) => setPriority(event.target.value)}><option value="low">Low priority</option><option value="normal">Normal priority</option><option value="high">High priority</option><option value="urgent">Urgent</option></select><input type="date" value={dueAt} onChange={(event) => setDueAt(event.target.value)} /><select value={assignedTo} onChange={(event) => setAssignedTo(event.target.value)}><option value="">Assign to me</option>{users.map((user) => <option key={user.id} value={user.id}>{user.display_name}</option>)}</select><select value={recurrenceRule} onChange={(event) => setRecurrenceRule(event.target.value)}><option value="">No repeat</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : "Add task"}</button></form>
+    <div className="section-heading task-heading"><div><p className="eyebrow">Queue</p><h2>{tasks.length} tasks</h2></div><select className="scope-select" value={taskScope} onChange={(event) => setTaskScope(event.target.value)}><option value="own">My tasks</option><option value="department">Department tasks</option><option value="organization">All company tasks</option></select></div>
+    <div className="task-list">{tasks.map((task) => { const syncStatus = outboxStatuses.get(task.id); return <div key={task.id}><div className="task-row"><span className={`task-status ${task.status}`} /><span className="record-copy"><strong>{task.title}</strong><small>{task.priority} priority · {task.dueAt ? `due ${task.dueAt.slice(0, 10)} · ` : ""}{task.assignedTo ? "assigned" : "unassigned"} · {syncStatus === "conflict" ? "server conflict" : syncStatus === "failed" ? "sync failed" : syncStatus === "pending" ? "waiting to sync" : "synced"}</small></span><button className="text-button" type="button" onClick={() => void openComments(task.id)}>Comments</button>{syncStatus === "failed" || syncStatus === "conflict" ? <span className="task-actions"><button className="text-button" type="button" onClick={() => void retryTask(task.id)}>Retry</button>{syncStatus === "conflict" && <button className="text-button muted" type="button" onClick={() => void discardTask(task.id)}>Discard</button>}</span> : <span className={`status-pill priority-${task.priority}`}>{task.status.replace("_", " ")}</span>}</div>{commentTaskId === task.id && <div className="comment-thread">{comments.map((comment) => <p key={comment.id}><strong>{comment.author_name}</strong> {comment.body}</p>)}<form onSubmit={addComment}><input value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder="Write a comment or @mention someone" /><button className="text-button" type="submit">Post</button></form></div>}</div>; })}</div>
+  </section>;
+}
+
+function AttendanceView() {
+  const [records, setRecords] = useState<LocalAttendance[]>([]);
+  const [managerRecords, setManagerRecords] = useState<Array<LocalAttendance & { display_name?: string }>>([]);
+  const [users, setUsers] = useState<Array<{ id: string; display_name: string }>>([]);
+  const [correction, setCorrection] = useState({ user_id: "", work_date: new Date().toISOString().slice(0, 10), check_in_at: "", check_out_at: "", status: "present", note: "" });
+  const [message, setMessage] = useState("");
+  const today = new Date().toISOString().slice(0, 10);
+  const todayRecord = records.find((record) => record.work_date === today);
+
+  const load = async () => {
+    try {
+      await syncPendingOperations(apiBase);
+      const response = await fetch(`${apiBase}/attendance`, { credentials: "include" });
+      if (!response.ok) throw new Error("offline");
+      const remote = await response.json() as LocalAttendance[];
+      setRecords(remote); await cacheAttendance(remote);
+      const managerResponse = await fetch(`${apiBase}/attendance/organization`, { credentials: "include" });
+      if (managerResponse.ok) {
+        setManagerRecords(await managerResponse.json());
+        const usersResponse = await fetch(`${apiBase}/users`, { credentials: "include" });
+        if (usersResponse.ok) setUsers(await usersResponse.json());
+      }
+    } catch { try { setRecords(await getLocalAttendance()); } catch { setRecords([]); } }
+  };
+  useEffect(() => { void load(); const onOnline = () => void load(); window.addEventListener("online", onOnline); return () => window.removeEventListener("online", onOnline); }, []);
+
+  const mark = async (kind: "check_in" | "check_out") => {
+    const now = new Date().toISOString();
+    const local: LocalAttendance = todayRecord ?? { id: crypto.randomUUID(), user_id: "local", work_date: today, check_in_at: null, check_out_at: null, status: "present", note: "" };
+    if (kind === "check_in") local.check_in_at = now; else local.check_out_at = now;
+    try {
+      const response = await fetch(`${apiBase}/attendance/${kind.replace("_", "-")}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: local.id, work_date: today, at: now }) });
+      if (!response.ok) throw new Error("offline");
+      const saved = await response.json() as LocalAttendance; setRecords((current) => [saved, ...current.filter((item) => item.work_date !== today)]); await cacheAttendance([saved]); setMessage(kind === "check_in" ? "Checked in" : "Checked out");
+    } catch {
+      await queueOperation({ id: `attendance:${today}:${kind}`, entity: "attendance", action: kind, payload: { id: local.id, work_date: today, at: now, note: "" }, createdAt: now });
+      await cacheAttendance([local]); setRecords((current) => [local, ...current.filter((item) => item.work_date !== today)]); setMessage("Saved offline · will sync when the server is reachable");
+    }
+  };
+
+  const submitCorrection = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const response = await fetch(`${apiBase}/attendance/corrections`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...correction, check_in_at: correction.check_in_at ? new Date(`${correction.work_date}T${correction.check_in_at}`).toISOString() : null, check_out_at: correction.check_out_at ? new Date(`${correction.work_date}T${correction.check_out_at}`).toISOString() : null }) });
+    if (!response.ok) { setMessage("Correction could not be saved"); return; }
+    setMessage("Attendance corrected"); setCorrection((current) => ({ ...current, check_in_at: "", check_out_at: "", note: "" })); void load();
+  };
+
+  return <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">Attendance</p><h1>Be present, clearly.</h1><p className="lede">Check-in and check-out remain available when the company server is offline.</p></div></div>{message && <p className="inline-message">{message}</p>}<div className="attendance-today"><div><p className="eyebrow">Today · {today}</p><h2>{todayRecord?.check_in_at ? todayRecord.check_out_at ? "Workday complete" : "Currently working" : "Not checked in"}</h2></div><div className="attendance-actions"><button className="primary-button" type="button" onClick={() => void mark("check_in")} disabled={Boolean(todayRecord?.check_in_at)}>Check in</button><button className="text-button" type="button" onClick={() => void mark("check_out")} disabled={!todayRecord?.check_in_at || Boolean(todayRecord.check_out_at)}>Check out</button></div></div><div className="section-heading task-heading"><div><p className="eyebrow">History</p><h2>Recent attendance</h2></div></div><div className="record-list">{records.map((record) => <div className="record-row" key={record.id}><span className="record-avatar"><Clock3 size={15} /></span><span className="record-copy"><strong>{record.work_date}</strong><small>{record.check_in_at ? new Date(record.check_in_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"} → {record.check_out_at ? new Date(record.check_out_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</small></span><span className="status-pill">{record.status}</span></div>)}</div>{managerRecords.length > 0 && <><div className="section-heading task-heading"><div><p className="eyebrow">Manager view</p><h2>Team attendance</h2></div></div><div className="record-list">{managerRecords.map((record) => <div className="record-row" key={record.id}><span className="record-avatar"><UsersRound size={15} /></span><span className="record-copy"><strong>{record.display_name}</strong><small>{record.work_date} · {record.check_in_at ? new Date(record.check_in_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"} → {record.check_out_at ? new Date(record.check_out_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</small></span><span className="status-pill">{record.status}</span></div>)}</div><form className="compact-form attendance-correction" onSubmit={submitCorrection}><p className="eyebrow">Correction</p><select value={correction.user_id} onChange={(event) => setCorrection({ ...correction, user_id: event.target.value })} required><option value="">Select person</option>{users.map((user) => <option value={user.id} key={user.id}>{user.display_name}</option>)}</select><input type="date" value={correction.work_date} onChange={(event) => setCorrection({ ...correction, work_date: event.target.value })} required /><div className="form-grid"><input type="time" value={correction.check_in_at} onChange={(event) => setCorrection({ ...correction, check_in_at: event.target.value })} /><input type="time" value={correction.check_out_at} onChange={(event) => setCorrection({ ...correction, check_out_at: event.target.value })} /><input placeholder="Reason or note" value={correction.note} onChange={(event) => setCorrection({ ...correction, note: event.target.value })} /></div><button className="primary-button" type="submit">Save correction</button></form></>}</section>;
+}
+
+function LeaveView() {
+  const [requests, setRequests] = useState<Array<LeaveRequest & LocalLeave>>([]);
+  const [form, setForm] = useState({ leave_type: "annual", start_date: new Date().toISOString().slice(0, 10), end_date: new Date().toISOString().slice(0, 10), reason: "" });
+  const [message, setMessage] = useState("");
+  const load = async () => { try { await syncPendingOperations(apiBase); const response = await fetch(`${apiBase}/leave`, { credentials: "include" }); if (!response.ok) throw new Error("offline"); const remote = await response.json() as Array<LeaveRequest & LocalLeave>; setRequests(remote); await cacheLeave(remote); } catch { try { setRequests(await getLocalLeave() as Array<LeaveRequest & LocalLeave>); } catch { setRequests([]); } } };
+  useEffect(() => { void load(); const onOnline = () => void load(); window.addEventListener("online", onOnline); return () => window.removeEventListener("online", onOnline); }, []);
+  const createRequest = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const now = new Date().toISOString(); const local: LocalLeave = { id: crypto.randomUUID(), requested_by: "local", leave_type: form.leave_type, start_date: form.start_date, end_date: form.end_date, reason: form.reason, status: "pending" }; try { const response = await fetch(`${apiBase}/leave`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) }); if (!response.ok) throw new Error("offline"); const saved = await response.json() as LeaveRequest & LocalLeave; setRequests((current) => [saved, ...current]); await cacheLeave([saved]); setMessage("Leave request submitted"); } catch { await queueOperation({ id: `leave:${local.id}`, entity: "leave", action: "create", payload: local, createdAt: now }); await cacheLeave([local]); setRequests((current) => [local, ...current]); setMessage("Saved offline · will sync when the server is reachable"); } setForm((current) => ({ ...current, reason: "" })); };
+  const decide = async (id: string, action: "approve" | "reject") => { const response = await fetch(`${apiBase}/leave/${action}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }); setMessage(response.ok ? `Request ${action}d` : "You do not have permission to decide this request"); if (response.ok) void load(); };
+  return <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">Leave</p><h1>Plan time away.</h1><p className="lede">Requests stay visible to the team and move through a clear approval path.</p></div></div>{message && <p className="inline-message">{message}</p>}<form className="leave-form" onSubmit={createRequest}><p className="eyebrow">New request</p><div className="form-grid"><select value={form.leave_type} onChange={(event) => setForm({ ...form, leave_type: event.target.value })}><option value="annual">Annual leave</option><option value="sick">Sick leave</option><option value="personal">Personal leave</option><option value="unpaid">Unpaid leave</option></select><input type="date" value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} required /><input type="date" value={form.end_date} onChange={(event) => setForm({ ...form, end_date: event.target.value })} required /></div><input placeholder="Reason (optional)" value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} /><button className="primary-button" type="submit">Submit request</button></form><div className="section-heading task-heading"><div><p className="eyebrow">Requests</p><h2>{requests.length} requests</h2></div></div><div className="record-list">{requests.map((request) => <div className="record-row" key={request.id}><span className="record-avatar"><CalendarDays size={15} /></span><span className="record-copy"><strong>{request.display_name ?? "My request"} · {request.leave_type}</strong><small>{request.start_date} → {request.end_date}{request.reason ? ` · ${request.reason}` : ""}</small></span><span className={`status-pill leave-${request.status}`}>{request.status}</span>{request.status === "pending" && <span className="task-actions"><button className="text-button" type="button" onClick={() => void decide(request.id, "approve")}>Approve</button><button className="text-button muted" type="button" onClick={() => void decide(request.id, "reject")}>Reject</button></span>}</div>)}</div></section>;
+}
+
+function ScheduleView() {
+  const [shifts, setShifts] = useState<LocalShift[]>([]);
+  const [form, setForm] = useState({ title: "", shift_date: new Date().toISOString().slice(0, 10), starts_at: "09:00", ends_at: "17:00", note: "" });
+  const [message, setMessage] = useState("");
+  const load = async () => { try { await syncPendingOperations(apiBase); const response = await fetch(`${apiBase}/shifts`, { credentials: "include" }); if (!response.ok) throw new Error("offline"); const remote = await response.json() as LocalShift[]; setShifts(remote); await cacheShifts(remote); } catch { try { setShifts(await getLocalShifts()); } catch { setShifts([]); } } };
+  useEffect(() => { void load(); const onOnline = () => void load(); window.addEventListener("online", onOnline); return () => window.removeEventListener("online", onOnline); }, []);
+  const createShift = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const now = new Date().toISOString(); const local: LocalShift = { id: crypto.randomUUID(), assigned_to: "local", ...form, status: "scheduled" }; try { const response = await fetch(`${apiBase}/shifts`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) }); if (!response.ok) throw new Error("offline"); const saved = await response.json() as LocalShift; setShifts((current) => [...current, saved]); await cacheShifts([saved]); setMessage("Shift scheduled"); } catch { await queueOperation({ id: `shift:${local.id}`, entity: "shift", action: "create", payload: local, createdAt: now }); await cacheShifts([local]); setShifts((current) => [...current, local]); setMessage("Saved offline · will sync when the server is reachable"); } setForm((current) => ({ ...current, title: "", note: "" })); };
+  return <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">Schedule</p><h1>Make time visible.</h1><p className="lede">Shifts stay available on this device and sync back to the company schedule.</p></div></div>{message && <p className="inline-message">{message}</p>}<form className="leave-form" onSubmit={createShift}><p className="eyebrow">New shift</p><div className="form-grid"><input placeholder="Shift title" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required /><input type="date" value={form.shift_date} onChange={(event) => setForm({ ...form, shift_date: event.target.value })} required /><input type="time" value={form.starts_at} onChange={(event) => setForm({ ...form, starts_at: event.target.value })} required /></div><div className="form-grid"><input type="time" value={form.ends_at} onChange={(event) => setForm({ ...form, ends_at: event.target.value })} required /><input placeholder="Note (optional)" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /><button className="primary-button" type="submit">Schedule shift</button></div></form><div className="section-heading task-heading"><div><p className="eyebrow">Upcoming</p><h2>{shifts.length} shifts</h2></div></div><div className="record-list">{shifts.map((shift) => <div className="record-row" key={shift.id}><span className="record-avatar"><CalendarDays size={15} /></span><span className="record-copy"><strong>{shift.title}</strong><small>{shift.shift_date} · {shift.starts_at.slice(0, 5)} → {shift.ends_at.slice(0, 5)}</small></span><span className="status-pill">{shift.status}</span></div>)}</div></section>;
+}
+
+function ActivityView() {
+  const [entries, setEntries] = useState<AuditEntry[]>([]);
+  useEffect(() => { void fetch(`${apiBase}/audit-logs`, { credentials: "include" }).then((response) => response.ok ? response.json() : []).then(setEntries).catch(() => setEntries([])); }, []);
+  return <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">Activity</p><h1>Know what changed.</h1><p className="lede">A durable record of privileged actions in this private installation.</p></div></div><div className="section-heading task-heading"><div><p className="eyebrow">Audit trail</p><h2>{entries.length} events</h2></div></div><div className="activity-list">{entries.map((entry) => <div className="activity-row" key={entry.id}><span className="activity-icon"><Activity size={16} /></span><span className="activity-copy"><strong>{entry.action}</strong><small>{entry.actor_name} · {entry.entity_type} · {new Date(entry.created_at).toLocaleString()}</small></span></div>)}</div></section>;
+}
+
+function PeopleView() {
+  const [users, setUsers] = useState<UserRecord[]>([]);
+  const [departments, setDepartments] = useState<DepartmentRecord[]>([]);
+  const [roles, setRoles] = useState<RoleRecord[]>([]);
+  const [permissions, setPermissions] = useState<PermissionRecord[]>([]);
+  const [roleForm, setRoleForm] = useState({ code: "", name: "", permissions: [] as string[] });
+  const [assignment, setAssignment] = useState({ user_id: "", role_id: "" });
+  const [showUserForm, setShowUserForm] = useState(false);
+  const [userForm, setUserForm] = useState({ display_name: "", email: "", password: "" });
+  const [departmentForm, setDepartmentForm] = useState({ name: "", slug: "" });
+  const [message, setMessage] = useState("");
+
+  const load = async () => {
+    const [usersResponse, departmentsResponse, rolesResponse, permissionsResponse] = await Promise.all([
+      fetch(`${apiBase}/users`, { credentials: "include" }),
+      fetch(`${apiBase}/departments`, { credentials: "include" }),
+      fetch(`${apiBase}/roles`, { credentials: "include" }),
+      fetch(`${apiBase}/permissions`, { credentials: "include" }),
+    ]);
+    if (usersResponse.ok) setUsers(await usersResponse.json());
+    if (departmentsResponse.ok) setDepartments(await departmentsResponse.json());
+    if (rolesResponse.ok) setRoles(await rolesResponse.json());
+    if (permissionsResponse.ok) setPermissions(await permissionsResponse.json());
+  };
+
+  useEffect(() => { void load(); }, []);
+
+  const createUser = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setMessage("");
+    const response = await fetch(`${apiBase}/users`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(userForm) });
+    if (!response.ok) { setMessage((await response.json()).error ?? "Could not create user"); return; }
+    setUserForm({ display_name: "", email: "", password: "" });
+    setShowUserForm(false);
+    setMessage("User added");
+    await load();
+  };
+
+  const createDepartment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setMessage("");
+    const response = await fetch(`${apiBase}/departments`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(departmentForm) });
+    if (!response.ok) { setMessage((await response.json()).error ?? "Could not create department"); return; }
+    setDepartmentForm({ name: "", slug: "" });
+    setMessage("Department added");
+    await load();
+  };
+
+  const createRole = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const response = await fetch(`${apiBase}/roles`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(roleForm) }); if (!response.ok) { setMessage("Role could not be created"); return; } setRoleForm({ code: "", name: "", permissions: [] }); setMessage("Role created"); await load(); };
+  const assignRole = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const response = await fetch(`${apiBase}/user-roles`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(assignment) }); setMessage(response.ok ? "Role assigned" : "Role could not be assigned"); };
+
+  return <section className="content-wrap">
+    <div className="page-heading"><div><p className="eyebrow">Organization</p><h1>People & teams.</h1><p className="lede">Manage the people and departments in this private installation.</p></div><button className="primary-button" type="button" onClick={() => setShowUserForm((value) => !value)}>{showUserForm ? "Close form" : "Add person"}</button></div>
+    {message && <p className="inline-message">{message}</p>}
+    <div className="people-grid">
+      <div className="people-section"><div className="section-heading"><div><p className="eyebrow">Directory</p><h2>{users.length} people</h2></div></div><div className="record-list">{users.map((user) => <div className="record-row" key={user.id}><span className="record-avatar">{user.display_name.slice(0, 1).toUpperCase()}</span><span className="record-copy"><strong>{user.display_name}</strong><small>{user.email}</small></span><span className="status-pill">{user.status}</span></div>)}</div></div>
+      <div className="people-section"><div className="section-heading"><div><p className="eyebrow">Structure</p><h2>{departments.length} departments</h2></div></div><form className="compact-form" onSubmit={createDepartment}><input value={departmentForm.name} onChange={(event) => setDepartmentForm({ ...departmentForm, name: event.target.value })} placeholder="Department name" required /><input value={departmentForm.slug} onChange={(event) => setDepartmentForm({ ...departmentForm, slug: event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-") })} placeholder="slug" required /><button className="text-button" type="submit">Add department <ArrowUpRight size={15} /></button></form><div className="record-list">{departments.map((department) => <div className="record-row" key={department.id}><span className="record-avatar department-avatar"><BriefcaseBusiness size={15} /></span><span className="record-copy"><strong>{department.name}</strong><small>{department.slug}</small></span></div>)}</div></div>
+    </div>
+    {showUserForm && <form className="user-form" onSubmit={createUser}><p className="eyebrow">New person</p><div className="form-grid"><input value={userForm.display_name} onChange={(event) => setUserForm({ ...userForm, display_name: event.target.value })} placeholder="Full name" required /><input type="email" value={userForm.email} onChange={(event) => setUserForm({ ...userForm, email: event.target.value })} placeholder="Email" required /><input type="password" value={userForm.password} onChange={(event) => setUserForm({ ...userForm, password: event.target.value })} placeholder="Temporary password (12+ characters)" minLength={12} required /></div><button className="primary-button" type="submit">Create person</button></form>}
+    {roles.length > 0 && <div className="rbac-panel"><div className="section-heading"><div><p className="eyebrow">Access control</p><h2>{roles.length} roles</h2></div></div><div className="record-list">{roles.map((role) => <div className="record-row" key={role.id}><span className="record-avatar">R</span><span className="record-copy"><strong>{role.name}</strong><small>{role.code} · {role.permissions.length} permissions</small></span></div>)}</div><form className="compact-form role-form" onSubmit={createRole}><p className="eyebrow">Create role</p><div className="form-grid"><input placeholder="Role code" value={roleForm.code} onChange={(event) => setRoleForm({ ...roleForm, code: event.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, "-") })} required /><input placeholder="Role name" value={roleForm.name} onChange={(event) => setRoleForm({ ...roleForm, name: event.target.value })} required /></div><div className="permission-grid">{permissions.map((permission) => <label key={permission.code}><input type="checkbox" checked={roleForm.permissions.includes(permission.code)} onChange={(event) => setRoleForm({ ...roleForm, permissions: event.target.checked ? [...roleForm.permissions, permission.code] : roleForm.permissions.filter((code) => code !== permission.code) })} />{permission.code}</label>)}</div><button className="primary-button" type="submit">Create role</button></form><form className="compact-form role-form" onSubmit={assignRole}><p className="eyebrow">Assign role</p><div className="form-grid"><select value={assignment.user_id} onChange={(event) => setAssignment({ ...assignment, user_id: event.target.value })} required><option value="">Select person</option>{users.map((user) => <option key={user.id} value={user.id}>{user.display_name}</option>)}</select><select value={assignment.role_id} onChange={(event) => setAssignment({ ...assignment, role_id: event.target.value })} required><option value="">Select role</option>{roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></div><button className="text-button" type="submit">Assign role <ArrowUpRight size={15} /></button></form></div>}
+  </section>;
+}
+
+function LoadingScreen() {
+  return <main className="auth-shell"><div className="auth-panel"><div className="brand-mark">N</div><p className="eyebrow">Name</p><h1>Preparing your workspace.</h1><p className="lede">Checking the local application server.</p></div></main>;
+}
+
+function AuthScreen({ mode, theme, onThemeToggle, onAuthenticated }: { mode: "setup" | "login"; theme: Theme; onThemeToggle: () => void; onAuthenticated: (user: CurrentUser) => void }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [organizationName, setOrganizationName] = useState("");
+  const [organizationSlug, setOrganizationSlug] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError("");
+    setSubmitting(true);
+    try {
+      if (mode === "setup") {
+        const setupResponse = await fetch(`${apiBase}/setup`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ organization_name: organizationName, organization_slug: organizationSlug, name, email, password }) });
+        if (!setupResponse.ok) throw new Error((await setupResponse.json()).error ?? "Could not complete setup");
+      }
+
+      const loginResponse = await fetch(`${apiBase}/auth/login`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
+      if (!loginResponse.ok) throw new Error((await loginResponse.json()).error ?? "Could not sign in");
+      const meResponse = await fetch(`${apiBase}/auth/me`, { credentials: "include" });
+      if (!meResponse.ok) throw new Error("Could not load your account");
+      onAuthenticated(await meResponse.json());
+    } catch (submissionError) {
+      setError(submissionError instanceof Error ? submissionError.message : "Something went wrong");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return <main className="auth-shell">
+    <section className="auth-panel">
+      <div className="auth-heading"><div className="brand-mark">N</div><p className="eyebrow">Name · Private workspace</p><h1>{mode === "setup" ? "Set up your company." : "Welcome back."}</h1><p className="lede">{mode === "setup" ? "Create the first owner account for this installation." : "Sign in to continue to your workspace."}</p></div>
+      <form className="auth-form" onSubmit={submit}>
+        {mode === "setup" && <><label>Company name<input value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} placeholder="Acme Company" required /></label><label>Company slug<input value={organizationSlug} onChange={(event) => setOrganizationSlug(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))} placeholder="acme-company" required /></label><label>Your name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Lucas Marshall" required /></label></>}
+        <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" required /></label>
+        <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 12 characters" minLength={12} required /></label>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <button className="primary-button submit-button" type="submit" disabled={submitting}>{submitting ? "Connecting…" : mode === "setup" ? "Create workspace" : "Sign in"}</button>
+      </form>
+      <p className="auth-footnote">Your data stays on this company's private installation.</p>
+    </section>
+    <button className="theme-switcher" type="button" onClick={onThemeToggle} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}>{theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}<span>{theme === "dark" ? "Light" : "Dark"}</span></button>
+  </main>;
+}
+
+function Metric({ label, value, change, detail, warning = false }: { label: string; value: string; change: string; detail: string; warning?: boolean }) {
+  return <div className="metric-row">
+    <div><p className="metric-label">{label}</p><strong className="metric-value">{value}</strong></div>
+    <div className={`metric-change ${warning ? "warning" : ""}`}>{change}<small>{detail}</small></div>
+  </div>;
+}
+
+function ActivityRow({ icon, title, detail }: { icon: ReactNode; title: string; detail: string }) {
+  return <div className="activity-row"><span className="activity-icon">{icon}</span><span className="activity-copy"><strong>{title}</strong><small>{detail}</small></span><ArrowUpRight size={16} /></div>;
+}
+
+export default App;

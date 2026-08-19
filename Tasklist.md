@@ -1,0 +1,284 @@
+# Development Task List
+
+This is the master implementation checklist for the installable enterprise business software.
+
+## Legend
+
+- `[ ]` Not started
+- `[-]` In progress
+- `[x]` Completed
+- `[!]` Blocked or needs a decision
+
+## Phase 0 — Workspace and Engineering Foundation
+
+- [x] Confirm product distribution model: self-hosted installable software
+- [x] Confirm backend language: Go
+- [x] Confirm desktop shell: Tauri
+- [x] Confirm frontend: React + TypeScript
+- [x] Confirm database: PostgreSQL
+- [x] Confirm design system direction
+- [x] Create source repository structure
+- [x] Add root README and contributor guide
+- [ ] Add engineering `AGENTS.md`
+- [ ] Define development commands and scripts
+- [ ] Define environment variable conventions
+- [x] Define local development setup
+- [ ] Add formatting and linting
+- [ ] Add unit test and integration test foundations
+- [ ] Add CI pipeline
+
+## Phase 1 — Application Shell
+
+- [x] Create Go backend application
+- [x] Create Tauri desktop application configuration
+- [x] Create React + TypeScript frontend
+- [x] Create shared design tokens
+- [x] Add Plus Jakarta Sans font direction
+- [x] Implement light theme
+- [x] Implement dark theme with `#222323` background
+- [x] Add bottom-right theme switcher
+- [x] Implement borderless GitBook / Swiss-style app shell
+- [x] Install Rust/Cargo toolchain
+- [x] Install Tauri CLI
+- [x] Verify Tauri Rust project with `cargo check`
+- [x] Build macOS `.app` bundle
+- [ ] Fix macOS `.dmg` packaging
+- [ ] Add responsive layout behavior
+- [ ] Add keyboard navigation and accessibility baseline
+
+## Phase 2 — Database and Platform Core
+
+- [x] Configure PostgreSQL connection foundation
+- [x] Add initial migration system folder and schema
+- [x] Define organization model
+- [x] Define user model
+- [x] Define department model
+- [x] Define team model
+- [ ] Define reporting line model
+- [ ] Define job title and position models
+- [x] Define audit log model
+- [x] Add audit log API
+- [x] Record RBAC and leave decision events
+- [x] Record authentication events
+- [x] Record attendance events
+- [x] Record scheduling events
+- [x] Add Activity audit trail view
+- [ ] Define file and attachment model
+- [x] Add health-check endpoint
+- [ ] Add structured logging
+- [ ] Add error handling conventions
+
+## Phase 3 — Authentication and RBAC
+
+- [x] Implement first-run owner setup
+- [x] Implement login
+- [x] Implement logout and session revocation
+- [x] Implement session management
+- [x] Implement Argon2id password hashing
+- [ ] Implement password reset flow
+- [ ] Add privileged-user MFA foundation
+- [ ] Implement organization membership
+- [ ] Implement department membership
+- [x] Create roles and permissions schema
+- [x] Seed owner role and base permissions
+- [x] Implement roles and permissions management API
+- [x] Add permission catalogue endpoint
+- [x] Add custom role creation with permission assignment
+- [x] Add user role assignment endpoint
+- [x] Add user list/create API foundation
+- [x] Add department list/create API foundation
+- [x] Add People management screen
+- [x] Add user creation form
+- [x] Add department creation form
+- [x] Implement data scopes: own, department, organization foundation
+- [x] Add user-department membership model and assignment endpoint
+- [x] Add task scope selector in Work UI
+- [ ] Implement team scope and scope-aware dashboards
+- [x] Add backend authorization middleware
+- [x] Add permission checks for organization, user, and department endpoints
+- [ ] Add permission-change audit history
+- [ ] Add offboarding access revocation
+- [x] Add protected route and UI permission handling
+- [x] Add role management UI
+- [x] Add frontend capability-aware role/permission loading
+
+## Phase 4 — Shared Work Management
+
+- [x] Define task model
+- [x] Implement task creation and editing foundation
+- [x] Implement assignment and ownership foundation
+- [x] Implement task status and priority foundation
+- [x] Implement due dates foundation
+- [x] Add recurring rule field foundation
+- [x] Implement recurring task generator foundation
+- [x] Run recurring generation from a background worker
+- [x] Add row locking to prevent duplicate generation
+- [x] Implement comments and mention-ready text foundation
+- [x] Implement secure attachment metadata and local storage upload foundation
+- [x] Add secure attachment download endpoint
+- [x] Record attachment download audit events
+- [x] Add optional ClamAV scan integration and scan-status guard
+- [x] Add retention policy configuration with backup verification gate
+- [x] Add backup creation and archive verification command
+- [x] Add backup checksum manifest
+- [ ] Add retention cleanup worker gated by verified backup manifest
+- [ ] Define project model
+- [ ] Implement project and team views
+- [ ] Add calendar model
+- [x] Add scheduling model foundation
+- [x] Add shift list/create API
+- [x] Add offline shift cache and sync processor
+- [x] Add schedule UI
+- [ ] Add notifications foundation
+
+### Attendance foundation
+
+- [x] Define attendance record model
+- [x] Add attendance permissions and migration
+- [x] Add authenticated check-in and check-out API
+- [x] Add offline attendance storage and sync operations
+- [x] Add attendance screen with recent history
+- [x] Add manager attendance views
+- [x] Add attendance correction workflow
+- [ ] Add shifts, leave, corrections history, and payroll rules
+
+## Phase 5 — Workflow Engine
+
+- [ ] Define workflow definition model
+- [ ] Define workflow instance model
+- [ ] Define approval step model
+- [ ] Support sequential approvals
+- [ ] Support parallel approvals
+- [ ] Support role-based approvers
+- [ ] Support amount-based approval rules
+- [ ] Support rejection reasons
+- [ ] Support resubmission
+- [ ] Support delegated approval
+- [ ] Add approval reminders and deadlines
+- [ ] Add complete workflow audit trail
+
+## Phase 6 — Offline Capability
+
+- [x] Define local client storage strategy: SQLite for device offline mode
+- [x] Define sync operation model: Go-owned sync queue and server validation
+- [x] Add local SQLite database integration through Tauri SQL plugin
+- [x] Add local session cache
+- [x] Add local sync outbox table foundation
+- [x] Add sync push endpoint with idempotent operation IDs
+- [x] Add sync pull endpoint
+- [x] Add local outbox operation helpers
+- [x] Add task database schema and permissions
+- [x] Add authenticated task list/create API
+- [x] Apply offline task create operations on the server
+- [x] Add client sync queue processing for pending operations
+- [x] Add pending / synced / failed states
+- [x] Add retry behavior for failed operations
+- [x] Add conflict state and task conflict resolution actions
+- [ ] Add conflict history and entity-specific merge resolution
+- [ ] Add tombstones for deleted records
+- [ ] Define task offline rules
+- [ ] Define calendar offline rules
+- [ ] Define attendance offline rules
+- [ ] Define finance and permission server-authoritative rules
+- [ ] Add offline conflict review UI
+- [ ] Test offline mode without internet access
+
+## Phase 7 — Business Modules
+
+### HR
+
+- [ ] Employee profiles
+- [ ] Attendance
+- [x] Leave management foundation
+- [x] Leave request submission
+- [x] Leave approval and rejection foundation
+- [x] Add offline leave request cache and sync processor
+- [ ] Onboarding
+- [ ] Offboarding
+- [ ] HR documents
+
+### Finance
+
+- [ ] Expenses
+- [ ] Invoices
+- [ ] Budgets
+- [ ] Purchase requests
+- [ ] Vendors
+- [ ] Finance approvals
+
+### Sales and CRM
+
+- [ ] Leads
+- [ ] Contacts
+- [ ] Companies
+- [ ] Opportunities
+- [ ] Sales pipeline
+- [ ] Sales activities
+
+### IT and Operations
+
+- [ ] IT tickets
+- [ ] Service requests
+- [ ] Asset registry
+- [ ] Access requests
+- [ ] Knowledge base
+- [ ] Procurement and inventory
+
+## Phase 8 — Analytics and Executive Control
+
+- [ ] Define KPI model
+- [ ] Define dashboard data permissions
+- [ ] Add department dashboards
+- [ ] Add executive dashboard
+- [ ] Add delayed-work alerts
+- [ ] Add approval bottleneck alerts
+- [ ] Add spending summaries
+- [ ] Add attendance summaries
+- [ ] Add sales summaries
+- [ ] Add custom reports
+- [ ] Add scheduled reports
+- [ ] Add export audit trail when reporting/export services are introduced
+
+## Phase 9 — Packaging, Licensing, and Operations
+
+- [ ] Define installer architecture
+- [ ] Package Go backend
+- [ ] Package Tauri desktop client
+- [ ] Package PostgreSQL setup
+- [ ] Package local file storage
+- [ ] Add backup and restore tools
+- [ ] Add license file format
+- [ ] Add signed license validation
+- [ ] Add update manager
+- [ ] Add database migration checks
+- [ ] Add health-check and diagnostics bundle
+- [ ] Add rollback support
+- [ ] Test small-business deployment
+- [ ] Test standard-company deployment
+- [ ] Test enterprise deployment
+
+## Phase 10 — LukeLang Evaluation Track
+
+- [ ] Define LukeLang integration boundary
+- [ ] Add LukeLang language guide for AI-assisted development
+- [ ] Build reactive dashboard proof of concept
+- [ ] Build realtime notification proof of concept
+- [ ] Add compiler verification to CI
+- [ ] Add cross-platform LukeLang build matrix
+- [ ] Benchmark LukeLang against the relevant Go and React workloads
+- [ ] Decide which modules, if any, should use LukeLang in production
+
+## Release Readiness
+
+- [ ] Security review
+- [ ] RBAC penetration tests
+- [ ] Offline and conflict tests
+- [ ] Backup and restore verification
+- [ ] Database migration rollback verification
+- [ ] Performance tests
+- [ ] Long-running stability tests
+- [ ] Cross-platform installer tests
+- [ ] Customer documentation
+- [ ] Administrator documentation
+- [ ] End-user documentation
+- [ ] Support and diagnostics process

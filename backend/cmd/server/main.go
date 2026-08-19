@@ -1,0 +1,381 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"log"
+	"net/http"
+	"strings"
+	"time"
+
+	"name/backend/internal/attendance"
+	"name/backend/internal/audit"
+	"name/backend/internal/auth"
+	"name/backend/internal/config"
+	"name/backend/internal/database"
+	"name/backend/internal/leave"
+	"name/backend/internal/rbac"
+	"name/backend/internal/shifts"
+	"name/backend/internal/sync"
+	"name/backend/internal/tasks"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type healthResponse struct {
+	Status    string `json:"status"`
+	Service   string `json:"service"`
+	Version   string `json:"version"`
+	Timestamp string `json:"timestamp"`
+	Database  string `json:"database"`
+}
+
+type organization struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Slug      string    `json:"slug"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type createOrganizationRequest struct {
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+func main() {
+	cfg := config.FromEnvironment()
+	var pool *pgxpool.Pool
+	if cfg.DatabaseURL != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		var err error
+		pool, err = database.Open(ctx, cfg.DatabaseURL)
+		cancel()
+		if err != nil {
+			log.Printf("database unavailable: %v", err)
+		} else {
+			defer pool.Close()
+			log.Printf("connected to PostgreSQL")
+		}
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", healthHandler(pool))
+	mux.HandleFunc("GET /api/v1/health", healthHandler(pool))
+	authHandler := auth.Handler{DB: pool}
+	mux.Handle("GET /api/v1/organizations", authHandler.RequirePermission("organization.read", organizationsHandler(pool, authHandler)))
+	mux.Handle("POST /api/v1/organizations", authHandler.RequirePermission("organization.manage", organizationsHandler(pool, authHandler)))
+	mux.Handle("GET /api/v1/users", authHandler.RequirePermission("users.read", usersHandler(pool, authHandler)))
+	mux.Handle("POST /api/v1/users", authHandler.RequirePermission("users.manage", usersHandler(pool, authHandler)))
+	mux.Handle("GET /api/v1/departments", authHandler.RequirePermission("organization.read", departmentsHandler(pool, authHandler)))
+	mux.Handle("POST /api/v1/departments", authHandler.RequirePermission("organization.manage", departmentsHandler(pool, authHandler)))
+	mux.Handle("POST /api/v1/user-departments", authHandler.RequirePermission("organization.manage", userDepartmentsHandler(pool, authHandler)))
+	mux.HandleFunc("GET /api/v1/setup/status", authHandler.SetupStatus)
+	mux.HandleFunc("POST /api/v1/setup", authHandler.Setup)
+	mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)
+	mux.HandleFunc("POST /api/v1/auth/logout", authHandler.Logout)
+	mux.HandleFunc("GET /api/v1/auth/me", authHandler.Me)
+	syncHandler := sync.Handler{DB: pool, Auth: authHandler}
+	mux.HandleFunc("POST /api/v1/sync/push", syncHandler.Push)
+	mux.HandleFunc("GET /api/v1/sync/pull", syncHandler.Pull)
+	taskHandler := tasks.Handler{DB: pool, Auth: authHandler, StoragePath: cfg.StoragePath, ClamScanPath: cfg.ClamScanPath}
+	if pool != nil {
+		go taskHandler.StartRecurringWorker(context.Background())
+	}
+	mux.Handle("GET /api/v1/tasks", authHandler.RequirePermission("tasks.read", http.HandlerFunc(taskHandler.List)))
+	mux.Handle("POST /api/v1/tasks", authHandler.RequirePermission("tasks.manage", http.HandlerFunc(taskHandler.Create)))
+	mux.Handle("PATCH /api/v1/tasks/{id}", authHandler.RequirePermission("tasks.manage", http.HandlerFunc(taskHandler.Update)))
+	mux.Handle("GET /api/v1/tasks/{id}/comments", authHandler.RequirePermission("tasks.read", http.HandlerFunc(taskHandler.Comments)))
+	mux.Handle("POST /api/v1/tasks/{id}/comments", authHandler.RequirePermission("tasks.manage", http.HandlerFunc(taskHandler.Comments)))
+	mux.Handle("POST /api/v1/tasks/generate-recurring", authHandler.RequirePermission("tasks.manage", http.HandlerFunc(taskHandler.GenerateRecurring)))
+	mux.Handle("GET /api/v1/tasks/{id}/attachments", authHandler.RequirePermission("tasks.read", http.HandlerFunc(taskHandler.Attachments)))
+	mux.Handle("POST /api/v1/tasks/{id}/attachments", authHandler.RequirePermission("tasks.manage", http.HandlerFunc(taskHandler.Attachments)))
+	mux.Handle("GET /api/v1/tasks/{id}/attachments/{attachmentID}", authHandler.RequirePermission("tasks.read", http.HandlerFunc(taskHandler.DownloadAttachment)))
+	attendanceHandler := attendance.Handler{DB: pool, Auth: authHandler}
+	mux.Handle("GET /api/v1/attendance", authHandler.RequirePermission("attendance.read", http.HandlerFunc(attendanceHandler.List)))
+	mux.Handle("GET /api/v1/attendance/organization", authHandler.RequirePermission("attendance.manage", http.HandlerFunc(attendanceHandler.ListOrganization)))
+	mux.Handle("POST /api/v1/attendance/corrections", authHandler.RequirePermission("attendance.manage", http.HandlerFunc(attendanceHandler.Correct)))
+	mux.Handle("POST /api/v1/attendance/check-in", authHandler.RequirePermission("attendance.manage", http.HandlerFunc(attendanceHandler.Mutate)))
+	mux.Handle("POST /api/v1/attendance/check-out", authHandler.RequirePermission("attendance.manage", http.HandlerFunc(attendanceHandler.Mutate)))
+	leaveHandler := leave.Handler{DB: pool, Auth: authHandler}
+	mux.Handle("GET /api/v1/leave", authHandler.RequirePermission("leave.read", http.HandlerFunc(leaveHandler.List)))
+	mux.Handle("POST /api/v1/leave", authHandler.RequirePermission("leave.read", http.HandlerFunc(leaveHandler.Create)))
+	mux.Handle("POST /api/v1/leave/approve", authHandler.RequirePermission("leave.manage", http.HandlerFunc(leaveHandler.Decide)))
+	mux.Handle("POST /api/v1/leave/reject", authHandler.RequirePermission("leave.manage", http.HandlerFunc(leaveHandler.Decide)))
+	shiftHandler := shifts.Handler{DB: pool, Auth: authHandler}
+	mux.Handle("GET /api/v1/shifts", authHandler.RequirePermission("shifts.read", http.HandlerFunc(shiftHandler.List)))
+	mux.Handle("POST /api/v1/shifts", authHandler.RequirePermission("shifts.manage", http.HandlerFunc(shiftHandler.Create)))
+	rbacHandler := rbac.Handler{DB: pool, Auth: authHandler}
+	mux.Handle("GET /api/v1/permissions", authHandler.RequirePermission("roles.manage", http.HandlerFunc(rbacHandler.Permissions)))
+	mux.Handle("GET /api/v1/roles", authHandler.RequirePermission("roles.manage", http.HandlerFunc(rbacHandler.Roles)))
+	mux.Handle("POST /api/v1/roles", authHandler.RequirePermission("roles.manage", http.HandlerFunc(rbacHandler.CreateRole)))
+	mux.Handle("POST /api/v1/user-roles", authHandler.RequirePermission("roles.manage", http.HandlerFunc(rbacHandler.Assign)))
+	auditHandler := audit.Handler{DB: pool, Auth: authHandler}
+	mux.Handle("GET /api/v1/audit-logs", authHandler.RequirePermission("organization.read", http.HandlerFunc(auditHandler.List)))
+
+	server := &http.Server{
+		Addr:              ":" + cfg.Port,
+		Handler:           withJSON(withCORS(mux)),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	log.Printf("Name backend listening on http://localhost:%s", cfg.Port)
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
+}
+
+func healthHandler(pool *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		databaseStatus := "not_configured"
+		status := "ok"
+		if pool != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			err := pool.Ping(ctx)
+			cancel()
+			if err == nil {
+				databaseStatus = "connected"
+			} else {
+				databaseStatus = "unavailable"
+				status = "degraded"
+			}
+		}
+
+		writeJSON(w, http.StatusOK, healthResponse{
+			Status:    status,
+			Service:   "name-backend",
+			Version:   "0.1.0-dev",
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			Database:  databaseStatus,
+		})
+	}
+}
+
+func organizationsHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if pool == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "database is not configured"})
+			return
+		}
+
+		switch r.Method {
+		case http.MethodGet:
+			rows, err := pool.Query(r.Context(), `SELECT id, name, slug, created_at FROM organizations ORDER BY created_at ASC`)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load organizations"})
+				return
+			}
+			defer rows.Close()
+
+			organizations := make([]organization, 0)
+			for rows.Next() {
+				var item organization
+				if err := rows.Scan(&item.ID, &item.Name, &item.Slug, &item.CreatedAt); err != nil {
+					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not read organizations"})
+					return
+				}
+				organizations = append(organizations, item)
+			}
+			if err := rows.Err(); err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not read organizations"})
+				return
+			}
+			writeJSON(w, http.StatusOK, organizations)
+
+		case http.MethodPost:
+			if _, err := authHandler.Authenticate(r); err != nil {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+				return
+			}
+			var input createOrganizationRequest
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil || strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.Slug) == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and slug are required"})
+				return
+			}
+
+			var item organization
+			err := pool.QueryRow(r.Context(), `
+				INSERT INTO organizations (name, slug)
+				VALUES ($1, $2)
+				RETURNING id, name, slug, created_at`, strings.TrimSpace(input.Name), strings.TrimSpace(input.Slug)).Scan(&item.ID, &item.Name, &item.Slug, &item.CreatedAt)
+			if err != nil {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "organization could not be created; slug may already exist"})
+				return
+			}
+			writeJSON(w, http.StatusCreated, item)
+
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		}
+	}
+}
+
+type userRecord struct {
+	ID          string `json:"id"`
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name"`
+	Status      string `json:"status"`
+}
+
+type createUserRequest struct {
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name"`
+	Password    string `json:"password"`
+}
+
+func usersHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, err := authHandler.Authenticate(r)
+		if err != nil || pool == nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+			return
+		}
+		if r.Method == http.MethodGet {
+			rows, err := pool.Query(r.Context(), `SELECT id, email, display_name, status FROM users WHERE organization_id = $1 ORDER BY display_name`, user.OrganizationID)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load users"})
+				return
+			}
+			defer rows.Close()
+			users := make([]userRecord, 0)
+			for rows.Next() {
+				var item userRecord
+				if err := rows.Scan(&item.ID, &item.Email, &item.DisplayName, &item.Status); err != nil {
+					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not read users"})
+					return
+				}
+				users = append(users, item)
+			}
+			writeJSON(w, http.StatusOK, users)
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var input createUserRequest
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil || strings.TrimSpace(input.Email) == "" || strings.TrimSpace(input.DisplayName) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email and display name are required"})
+			return
+		}
+		passwordHash, err := auth.HashPassword(input.Password)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		var created userRecord
+		err = pool.QueryRow(r.Context(), `INSERT INTO users (organization_id, email, display_name, password_hash) VALUES ($1, lower($2), $3, $4) RETURNING id, email, display_name, status`, user.OrganizationID, strings.TrimSpace(input.Email), strings.TrimSpace(input.DisplayName), passwordHash).Scan(&created.ID, &created.Email, &created.DisplayName, &created.Status)
+		if err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "user could not be created; email may already exist"})
+			return
+		}
+		writeJSON(w, http.StatusCreated, created)
+	}
+}
+
+type departmentRecord struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+type createDepartmentRequest struct {
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+func departmentsHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, err := authHandler.Authenticate(r)
+		if err != nil || pool == nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+			return
+		}
+		if r.Method == http.MethodGet {
+			rows, err := pool.Query(r.Context(), `SELECT id, name, slug FROM departments WHERE organization_id = $1 ORDER BY name`, user.OrganizationID)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load departments"})
+				return
+			}
+			defer rows.Close()
+			departments := make([]departmentRecord, 0)
+			for rows.Next() {
+				var item departmentRecord
+				if err := rows.Scan(&item.ID, &item.Name, &item.Slug); err != nil {
+					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not read departments"})
+					return
+				}
+				departments = append(departments, item)
+			}
+			writeJSON(w, http.StatusOK, departments)
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var input createDepartmentRequest
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil || strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.Slug) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and slug are required"})
+			return
+		}
+		var created departmentRecord
+		err = pool.QueryRow(r.Context(), `INSERT INTO departments (organization_id, name, slug) VALUES ($1, $2, $3) RETURNING id, name, slug`, user.OrganizationID, strings.TrimSpace(input.Name), strings.TrimSpace(input.Slug)).Scan(&created.ID, &created.Name, &created.Slug)
+		if err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "department could not be created; slug may already exist"})
+			return
+		}
+		writeJSON(w, http.StatusCreated, created)
+	}
+}
+
+func userDepartmentsHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, err := authHandler.Authenticate(r)
+		if err != nil || pool == nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+			return
+		}
+		var input struct {
+			UserID       string `json:"user_id"`
+			DepartmentID string `json:"department_id"`
+			Primary      bool   `json:"is_primary"`
+		}
+		if json.NewDecoder(r.Body).Decode(&input) != nil || input.UserID == "" || input.DepartmentID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id and department_id are required"})
+			return
+		}
+		result, err := pool.Exec(r.Context(), `INSERT INTO user_departments (user_id,department_id,is_primary) SELECT u.id,d.id,$3 FROM users u JOIN departments d ON d.organization_id=u.organization_id WHERE u.id=$1 AND d.id=$2 AND u.organization_id=$4 ON CONFLICT (user_id,department_id) DO UPDATE SET is_primary=EXCLUDED.is_primary`, input.UserID, input.DepartmentID, input.Primary, user.OrganizationID)
+		if err != nil || result.RowsAffected() == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user or department does not belong to this organization"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "assigned"})
+	}
+}
+
+func withJSON(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		log.Printf("write response: %v", err)
+	}
+}
