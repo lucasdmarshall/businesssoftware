@@ -144,18 +144,20 @@ This is the master implementation checklist for the installable enterprise busin
 
 ## Phase 5 — Workflow Engine
 
-- [ ] Define workflow definition model
-- [ ] Define workflow instance model
-- [ ] Define approval step model
-- [ ] Support sequential approvals
-- [ ] Support parallel approvals
-- [ ] Support role-based approvers
-- [ ] Support amount-based approval rules
-- [ ] Support rejection reasons
-- [ ] Support resubmission
+- [x] Define workflow definition model
+- [x] Define workflow instance model
+- [x] Define approval step model
+- [x] Support sequential approvals
+- [x] Support parallel approvals
+- [x] Support role-based approvers
+- [x] Support amount-based approval rules
+- [x] Support rejection reasons
+- [x] Support resubmission
 - [ ] Support delegated approval
 - [ ] Add approval reminders and deadlines
-- [ ] Add complete workflow audit trail
+- [x] Add complete workflow audit trail
+- [x] Add generic approval engine API (definitions, instances, approve/reject/resubmit/cancel)
+- [x] Add Approvals UI: reviewer inbox, request submission, workflow builder, and history
 
 ## Phase 6 — Offline Capability
 

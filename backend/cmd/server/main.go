@@ -18,6 +18,7 @@ import (
 	"name/backend/internal/shifts"
 	"name/backend/internal/sync"
 	"name/backend/internal/tasks"
+	"name/backend/internal/workflow"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -111,6 +112,16 @@ func main() {
 	mux.Handle("POST /api/v1/user-roles", authHandler.RequirePermission("roles.manage", http.HandlerFunc(rbacHandler.Assign)))
 	auditHandler := audit.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/audit-logs", authHandler.RequirePermission("organization.read", http.HandlerFunc(auditHandler.List)))
+	workflowHandler := workflow.Handler{DB: pool, Auth: authHandler}
+	mux.Handle("GET /api/v1/workflow/definitions", authHandler.RequirePermission("workflow.read", http.HandlerFunc(workflowHandler.Definitions)))
+	mux.Handle("POST /api/v1/workflow/definitions", authHandler.RequirePermission("workflow.manage", http.HandlerFunc(workflowHandler.CreateDefinition)))
+	mux.Handle("GET /api/v1/workflow/instances", authHandler.RequirePermission("workflow.read", http.HandlerFunc(workflowHandler.Instances)))
+	mux.Handle("POST /api/v1/workflow/instances", authHandler.RequirePermission("workflow.manage", http.HandlerFunc(workflowHandler.CreateInstance)))
+	mux.Handle("GET /api/v1/workflow/instances/{id}", authHandler.RequirePermission("workflow.read", http.HandlerFunc(workflowHandler.Instance)))
+	mux.Handle("POST /api/v1/workflow/instances/{id}/approve", authHandler.RequirePermission("workflow.act", http.HandlerFunc(workflowHandler.Approve)))
+	mux.Handle("POST /api/v1/workflow/instances/{id}/reject", authHandler.RequirePermission("workflow.act", http.HandlerFunc(workflowHandler.Reject)))
+	mux.Handle("POST /api/v1/workflow/instances/{id}/resubmit", authHandler.RequirePermission("workflow.manage", http.HandlerFunc(workflowHandler.Resubmit)))
+	mux.Handle("POST /api/v1/workflow/instances/{id}/cancel", authHandler.RequirePermission("workflow.manage", http.HandlerFunc(workflowHandler.Cancel)))
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -364,7 +375,7 @@ func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

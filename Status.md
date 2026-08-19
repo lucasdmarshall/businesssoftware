@@ -134,6 +134,12 @@ Completed in this milestone:
 - Local PostgreSQL migration `008_audit_logs.sql` applied successfully
 - Frontend production build, Go tests, and Tauri Rust check pass after attendance changes
 - Frontend production build and Tauri Rust check pass after task management changes
+- Generic approval workflow engine added: definitions, ordered steps, instances, and an append-only action history (migration `014_workflow.sql`)
+- Workflow engine supports sequential steps, parallel steps (per-step required approvals), role- or user-based approvers, amount-band step rules, rejection with reason, resubmission, and cancellation; approvals remain server-authoritative
+- Workflow API added: definition list/create, instance list (reviewer inbox / mine filters), instance detail with history, and approve/reject/resubmit/cancel actions
+- Approvals UI added: reviewer inbox, request submission, workflow builder, and per-request approval history
+- Fixed CORS `Access-Control-Allow-Methods` to include POST and PATCH so browser-preflighted mutations succeed
+- Declared the `@tauri-apps/plugin-sql` frontend dependency so the production build type-checks and offline SQLite bindings resolve
 
 Next actions:
 
@@ -141,6 +147,11 @@ Next actions:
 2. Add shifts, leave balance, correction history, and payroll rules.
 3. Add conflict history and entity-specific merge resolution.
 4. Add export audit hooks when reporting/export services are introduced.
+5. Wire existing modules (leave, future finance) through the generic workflow engine instead of module-local approve/reject.
+6. Add workflow approval reminders/deadlines and delegated approval.
+7. Bundle Plus Jakarta Sans locally instead of the Google Fonts CDN import so typography survives true offline use.
+8. Resolve the responsive contradiction (`body { min-width: 1080px }` vs. the mobile media query) and add `prefers-reduced-motion` support to meet the design-system accessibility rules.
+9. Consume the `sync/pull` change feed and add delete tombstones so device-offline clients receive other clients' changes.
 
 ## Active Work
 

@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ChevronDown,
   CircleHelp,
+  ClipboardCheck,
   Clock3,
   CalendarDays,
   LayoutDashboard,
@@ -28,12 +29,20 @@ type LeaveRequest = { id: string; requested_by: string; display_name?: string; l
 type RoleRecord = { id: string; code: string; name: string; permissions: string[] };
 type PermissionRecord = { code: string; description: string };
 type AuditEntry = { id: string; action: string; entity_type: string; entity_id: string; actor_name: string; created_at: string };
+type WorkflowStepInput = { name: string; approver_role_code: string; required_approvals: number; min_amount: number | null; max_amount: number | null };
+type WorkflowStep = WorkflowStepInput & { id: string; step_order: number; approver_user_id: string };
+type WorkflowDefinition = { id: string; code: string; name: string; entity_type: string; active: boolean; steps: WorkflowStep[] };
+type WorkflowActionEntry = { id: string; step_order: number | null; actor_name: string; action: string; reason: string; created_at: string };
+type WorkflowInstance = { id: string; definition_id: string; definition_name: string; title: string; entity_type: string; amount: number | null; status: string; current_step_order: number | null; current_step_name: string; submitted_by: string; submitter_name: string; created_at: string; updated_at: string; actions?: WorkflowActionEntry[] };
+
+const workflowStatusClass: Record<string, string> = { in_review: "leave-pending", approved: "leave-approved", rejected: "leave-rejected", cancelled: "leave-rejected", draft: "" };
 
 const apiBase = "http://localhost:8080/api/v1";
 
 const navigation = [
   { label: "Overview", icon: LayoutDashboard, active: true },
   { label: "Work", icon: BriefcaseBusiness, permission: "tasks.read" },
+  { label: "Approvals", icon: ClipboardCheck, permission: "workflow.read" },
   { label: "Attendance", icon: Clock3, permission: "attendance.read" },
   { label: "Leave", icon: CalendarDays, permission: "leave.read" },
   { label: "Schedule", icon: CalendarDays, permission: "shifts.read" },
@@ -133,7 +142,7 @@ function App() {
         <nav className="primary-nav" aria-label="Primary navigation">
           <p className="eyebrow">Workspace</p>
           {navigation.filter(({ permission }) => !permission || !currentUser?.permissions?.length || currentUser.permissions.includes(permission)).map(({ label, icon: Icon, active }) => (
-            <button className={`nav-item ${(activeView === "overview" && active) || (activeView === "people" && label === "People") || (activeView === "work" && label === "Work") || (activeView === "attendance" && label === "Attendance") || (activeView === "leave" && label === "Leave") || (activeView === "schedule" && label === "Schedule") || (activeView === "activity" && label === "Activity") ? "active" : ""}`} key={label} type="button" onClick={() => setActiveView(label === "People" ? "people" : label === "Work" ? "work" : label === "Attendance" ? "attendance" : label === "Leave" ? "leave" : label === "Schedule" ? "schedule" : label === "Activity" ? "activity" : "overview")}>
+            <button className={`nav-item ${(activeView === "overview" && active) || (activeView === "people" && label === "People") || (activeView === "work" && label === "Work") || (activeView === "approvals" && label === "Approvals") || (activeView === "attendance" && label === "Attendance") || (activeView === "leave" && label === "Leave") || (activeView === "schedule" && label === "Schedule") || (activeView === "activity" && label === "Activity") ? "active" : ""}`} key={label} type="button" onClick={() => setActiveView(label === "People" ? "people" : label === "Work" ? "work" : label === "Approvals" ? "approvals" : label === "Attendance" ? "attendance" : label === "Leave" ? "leave" : label === "Schedule" ? "schedule" : label === "Activity" ? "activity" : "overview")}>
               <Icon size={17} strokeWidth={1.8} />
               <span>{label}</span>
             </button>
@@ -162,7 +171,7 @@ function App() {
           </div>
         </header>
 
-        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "attendance" ? <AttendanceView /> : activeView === "leave" ? <LeaveView /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : <section className="content-wrap">
+        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "approvals" ? <WorkflowView /> : activeView === "attendance" ? <AttendanceView /> : activeView === "leave" ? <LeaveView /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : <section className="content-wrap">
           <div className="page-heading">
             <div>
               <p className="eyebrow">Wednesday, 20 August 2026</p>
@@ -373,6 +382,112 @@ function ActivityView() {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   useEffect(() => { void fetch(`${apiBase}/audit-logs`, { credentials: "include" }).then((response) => response.ok ? response.json() : []).then(setEntries).catch(() => setEntries([])); }, []);
   return <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">Activity</p><h1>Know what changed.</h1><p className="lede">A durable record of privileged actions in this private installation.</p></div></div><div className="section-heading task-heading"><div><p className="eyebrow">Audit trail</p><h2>{entries.length} events</h2></div></div><div className="activity-list">{entries.map((entry) => <div className="activity-row" key={entry.id}><span className="activity-icon"><Activity size={16} /></span><span className="activity-copy"><strong>{entry.action}</strong><small>{entry.actor_name} · {entry.entity_type} · {new Date(entry.created_at).toLocaleString()}</small></span></div>)}</div></section>;
+}
+
+function WorkflowView() {
+  const [inbox, setInbox] = useState<WorkflowInstance[]>([]);
+  const [mine, setMine] = useState<WorkflowInstance[]>([]);
+  const [definitions, setDefinitions] = useState<WorkflowDefinition[]>([]);
+  const [detail, setDetail] = useState<WorkflowInstance | null>(null);
+  const [reason, setReason] = useState("");
+  const [message, setMessage] = useState("");
+  const [request, setRequest] = useState({ definition_id: "", title: "", amount: "" });
+  const [showBuilder, setShowBuilder] = useState(false);
+  const [builder, setBuilder] = useState<{ code: string; name: string; entity_type: string; steps: WorkflowStepInput[] }>({ code: "", name: "", entity_type: "generic", steps: [{ name: "", approver_role_code: "", required_approvals: 1, min_amount: null, max_amount: null }] });
+
+  const load = async () => {
+    const [inboxResponse, mineResponse, definitionsResponse] = await Promise.all([
+      fetch(`${apiBase}/workflow/instances?inbox=1`, { credentials: "include" }),
+      fetch(`${apiBase}/workflow/instances?mine=1`, { credentials: "include" }),
+      fetch(`${apiBase}/workflow/definitions`, { credentials: "include" }),
+    ]);
+    if (inboxResponse.ok) setInbox(await inboxResponse.json());
+    if (mineResponse.ok) setMine(await mineResponse.json());
+    if (definitionsResponse.ok) setDefinitions(await definitionsResponse.json());
+  };
+  useEffect(() => { void load(); }, []);
+
+  const openDetail = async (id: string) => {
+    setReason("");
+    const response = await fetch(`${apiBase}/workflow/instances/${id}`, { credentials: "include" });
+    if (response.ok) setDetail(await response.json());
+  };
+
+  const act = async (id: string, action: "approve" | "reject" | "resubmit" | "cancel") => {
+    if (action === "reject" && !reason.trim()) { setMessage("A rejection reason is required"); return; }
+    const response = await fetch(`${apiBase}/workflow/instances/${id}/${action}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }) });
+    const data = await response.json().catch(() => ({}));
+    setMessage(response.ok ? `Request ${data.status ?? action}` : (data.error ?? "Action could not be completed"));
+    setReason("");
+    await load();
+    await openDetail(id);
+  };
+
+  const submitRequest = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const amount = request.amount.trim() === "" ? null : Number(request.amount);
+    const response = await fetch(`${apiBase}/workflow/instances`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ definition_id: request.definition_id, title: request.title, amount }) });
+    const data = await response.json().catch(() => ({}));
+    setMessage(response.ok ? "Request submitted for approval" : (data.error ?? "Could not submit request"));
+    if (response.ok) { setRequest({ definition_id: "", title: "", amount: "" }); await load(); }
+  };
+
+  const createDefinition = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const response = await fetch(`${apiBase}/workflow/definitions`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(builder) });
+    const data = await response.json().catch(() => ({}));
+    setMessage(response.ok ? "Workflow created" : (data.error ?? "Could not create workflow"));
+    if (response.ok) { setBuilder({ code: "", name: "", entity_type: "generic", steps: [{ name: "", approver_role_code: "", required_approvals: 1, min_amount: null, max_amount: null }] }); setShowBuilder(false); await load(); }
+  };
+
+  const updateStep = (index: number, patch: Partial<WorkflowStepInput>) => setBuilder((current) => ({ ...current, steps: current.steps.map((step, position) => position === index ? { ...step, ...patch } : step) }));
+  const inboxHas = (id: string) => inbox.some((item) => item.id === id);
+
+  return <section className="content-wrap">
+    <div className="page-heading"><div><p className="eyebrow">Governance</p><h1>Approvals & workflows.</h1><p className="lede">Route requests through reviewers. Approvals are always confirmed on the company server.</p></div><button className="primary-button" type="button" onClick={() => setShowBuilder((value) => !value)}>{showBuilder ? "Close builder" : "New workflow"}</button></div>
+    {message && <p className="inline-message">{message}</p>}
+
+    <div className="section-heading task-heading"><div><p className="eyebrow">Waiting on you</p><h2>{inbox.length} to review</h2></div></div>
+    <div className="record-list">{inbox.length === 0 ? <p className="lede" style={{ padding: "18px 0" }}>Nothing is waiting for your decision.</p> : inbox.map((item) => <button className="record-row workflow-row" key={item.id} type="button" onClick={() => void openDetail(item.id)}><span className="record-avatar"><ClipboardCheck size={15} /></span><span className="record-copy"><strong>{item.title}</strong><small>{item.definition_name} · step: {item.current_step_name || "—"}{item.amount != null ? ` · ${item.amount.toLocaleString()}` : ""} · from {item.submitter_name}</small></span><span className={`status-pill ${workflowStatusClass[item.status] ?? ""}`}>{item.status.replace("_", " ")}</span></button>)}</div>
+
+    <form className="task-composer workflow-composer" onSubmit={submitRequest}>
+      <select value={request.definition_id} onChange={(event) => setRequest({ ...request, definition_id: event.target.value })} required><option value="">Select workflow…</option>{definitions.map((definition) => <option key={definition.id} value={definition.id}>{definition.name}</option>)}</select>
+      <input placeholder="Request title" value={request.title} onChange={(event) => setRequest({ ...request, title: event.target.value })} required />
+      <input placeholder="Amount (optional)" inputMode="decimal" value={request.amount} onChange={(event) => setRequest({ ...request, amount: event.target.value.replace(/[^0-9.]/g, "") })} />
+      <button className="primary-button" type="submit">Submit</button>
+    </form>
+
+    <div className="section-heading task-heading"><div><p className="eyebrow">Your requests</p><h2>{mine.length} submitted</h2></div></div>
+    <div className="record-list">{mine.map((item) => <button className="record-row workflow-row" key={item.id} type="button" onClick={() => void openDetail(item.id)}><span className="record-avatar department-avatar"><ClipboardCheck size={15} /></span><span className="record-copy"><strong>{item.title}</strong><small>{item.definition_name}{item.current_step_name ? ` · at: ${item.current_step_name}` : ""} · updated {new Date(item.updated_at).toLocaleDateString()}</small></span><span className={`status-pill ${workflowStatusClass[item.status] ?? ""}`}>{item.status.replace("_", " ")}</span></button>)}</div>
+
+    {detail && <div className="rbac-panel">
+      <div className="section-heading"><div><p className="eyebrow">{detail.definition_name}</p><h2>{detail.title}</h2></div><button className="text-button muted" type="button" onClick={() => setDetail(null)}>Close</button></div>
+      <p className="lede" style={{ marginBottom: 18 }}>Status: <span className={`status-pill ${workflowStatusClass[detail.status] ?? ""}`}>{detail.status.replace("_", " ")}</span>{detail.current_step_name ? ` · current step: ${detail.current_step_name}` : ""}{detail.amount != null ? ` · amount ${detail.amount.toLocaleString()}` : ""}</p>
+      <div className="comment-thread">{(detail.actions ?? []).map((action) => <p key={action.id}><strong>{action.actor_name}</strong> {action.action}{action.step_order ? ` · step ${action.step_order}` : ""}{action.reason ? ` — “${action.reason}”` : ""} <small style={{ color: "var(--faint)" }}>· {new Date(action.created_at).toLocaleString()}</small></p>)}</div>
+      {(inboxHas(detail.id) || (detail.status === "rejected" && detail.submitter_name)) && <div className="workflow-actions">
+        <input placeholder="Reason (required to reject)" value={reason} onChange={(event) => setReason(event.target.value)} />
+        {inboxHas(detail.id) && <><button className="primary-button" type="button" onClick={() => void act(detail.id, "approve")}>Approve</button><button className="text-button" type="button" onClick={() => void act(detail.id, "reject")}>Reject</button></>}
+        {detail.status === "rejected" && <button className="text-button" type="button" onClick={() => void act(detail.id, "resubmit")}>Resubmit</button>}
+        {(detail.status === "in_review" || detail.status === "draft") && <button className="text-button muted" type="button" onClick={() => void act(detail.id, "cancel")}>Cancel request</button>}
+      </div>}
+    </div>}
+
+    {showBuilder && <form className="user-form" onSubmit={createDefinition}>
+      <p className="eyebrow">New workflow definition</p>
+      <div className="form-grid"><input placeholder="Code (e.g. expense-approval)" value={builder.code} onChange={(event) => setBuilder({ ...builder, code: event.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, "-") })} required /><input placeholder="Name" value={builder.name} onChange={(event) => setBuilder({ ...builder, name: event.target.value })} required /><input placeholder="Entity type (generic)" value={builder.entity_type} onChange={(event) => setBuilder({ ...builder, entity_type: event.target.value })} /></div>
+      <p className="eyebrow" style={{ marginTop: 20 }}>Approval steps</p>
+      {builder.steps.map((step, index) => <div className="workflow-step-row" key={index}>
+        <input placeholder={`Step ${index + 1} name`} value={step.name} onChange={(event) => updateStep(index, { name: event.target.value })} required />
+        <input placeholder="Approver role code (blank = any)" value={step.approver_role_code} onChange={(event) => updateStep(index, { approver_role_code: event.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, "-") })} />
+        <input placeholder="# approvals" inputMode="numeric" value={String(step.required_approvals)} onChange={(event) => updateStep(index, { required_approvals: Math.max(1, Number(event.target.value.replace(/[^0-9]/g, "")) || 1) })} />
+        <input placeholder="Min amount" inputMode="decimal" value={step.min_amount ?? ""} onChange={(event) => updateStep(index, { min_amount: event.target.value.trim() === "" ? null : Number(event.target.value.replace(/[^0-9.]/g, "")) })} />
+        <input placeholder="Max amount" inputMode="decimal" value={step.max_amount ?? ""} onChange={(event) => updateStep(index, { max_amount: event.target.value.trim() === "" ? null : Number(event.target.value.replace(/[^0-9.]/g, "")) })} />
+        {builder.steps.length > 1 && <button className="text-button muted" type="button" onClick={() => setBuilder((current) => ({ ...current, steps: current.steps.filter((_, position) => position !== index) }))}>Remove</button>}
+      </div>)}
+      <button className="text-button" type="button" onClick={() => setBuilder((current) => ({ ...current, steps: [...current.steps, { name: "", approver_role_code: "", required_approvals: 1, min_amount: null, max_amount: null }] }))}>Add step <ArrowUpRight size={15} /></button>
+      <button className="primary-button" type="submit">Create workflow</button>
+    </form>}
+  </section>;
 }
 
 function PeopleView() {
