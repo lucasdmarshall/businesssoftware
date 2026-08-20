@@ -23,6 +23,7 @@ import (
 	"name/backend/internal/httpapi"
 	"name/backend/internal/itops"
 	"name/backend/internal/leave"
+	"name/backend/internal/lookups"
 	"name/backend/internal/notifications"
 	"name/backend/internal/orgstructure"
 	"name/backend/internal/projects"
@@ -96,6 +97,12 @@ func main() {
 	mux.Handle("POST /api/v1/users/{id}/reset-password", authHandler.RequirePermission("users.manage", http.HandlerFunc(authHandler.ResetPassword)))
 	mux.Handle("POST /api/v1/users/{id}/offboard", authHandler.RequirePermission("users.manage", http.HandlerFunc(authHandler.OffboardUser)))
 	mux.Handle("POST /api/v1/user-roles/unassign", authHandler.RequirePermission("roles.manage", http.HandlerFunc(authHandler.UnassignRole)))
+	lookupsHandler := lookups.Handler{DB: pool, Auth: authHandler}
+	mux.HandleFunc("GET /api/v1/lookups", lookupsHandler.Catalog)
+	mux.HandleFunc("GET /api/v1/lookups/{category}", lookupsHandler.List)
+	mux.HandleFunc("POST /api/v1/lookups/{category}", lookupsHandler.Create)
+	mux.HandleFunc("PATCH /api/v1/lookup-options/{id}", lookupsHandler.Update)
+	mux.HandleFunc("DELETE /api/v1/lookup-options/{id}", lookupsHandler.Delete)
 	syncHandler := sync.Handler{DB: pool, Auth: authHandler}
 	mux.HandleFunc("POST /api/v1/sync/push", syncHandler.Push)
 	mux.HandleFunc("GET /api/v1/sync/pull", syncHandler.Pull)
@@ -472,6 +479,7 @@ func withJSON(next http.Handler) http.Handler {
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {

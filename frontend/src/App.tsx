@@ -1,10 +1,13 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   Activity,
   ArrowUpRight,
   Bell,
   BriefcaseBusiness,
+  Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleHelp,
   ClipboardCheck,
   Clock3,
@@ -16,9 +19,12 @@ import {
   LineChart,
   Moon,
   PanelLeft,
+  Plus,
   Search,
+  SlidersHorizontal,
   Sun,
   Target,
+  Trash2,
   UsersRound,
   Wallet,
 } from "lucide-react";
@@ -46,10 +52,13 @@ type ExpenseItem = { id: string; description: string; category: string; amount: 
 type NotificationItem = { id: string; kind: string; title: string; body: string; entity_type: string; entity_id: string; read_at: string | null; created_at: string };
 type ProjectItem = { id: string; key: string; name: string; description: string; status: string; lead_id: string; lead_name: string; task_count: number; created_at: string };
 type CalendarEvent = { id: string; title: string; description: string; starts_at: string; ends_at: string; all_day: boolean; visibility: string; creator_name: string };
+type LookupOption = { id: string; category: string; value: string; label: string; color: string; sort_order: number; is_active: boolean };
+type LookupCatalogItem = { category: string; title: string; permission: string; editable: boolean };
+type DropdownOption = { value: string; label: string; color?: string };
 
 const workflowStatusClass: Record<string, string> = { in_review: "leave-pending", approved: "leave-approved", rejected: "leave-rejected", cancelled: "leave-rejected", draft: "" };
 
-const viewForLabel = (label: string): string => label === "People" ? "people" : label === "Work" ? "work" : label === "Projects" ? "projects" : label === "Approvals" ? "approvals" : label === "Finance" ? "finance" : label === "HR" ? "hr" : label === "Sales" ? "sales" : label === "IT" ? "it" : label === "Reports" ? "reports" : label === "Calendar" ? "calendar" : label === "Attendance" ? "attendance" : label === "Leave" ? "leave" : label === "Schedule" ? "schedule" : label === "Activity" ? "activity" : "overview";
+const viewForLabel = (label: string): string => label === "People" ? "people" : label === "Work" ? "work" : label === "Projects" ? "projects" : label === "Approvals" ? "approvals" : label === "Finance" ? "finance" : label === "HR" ? "hr" : label === "Sales" ? "sales" : label === "IT" ? "it" : label === "Reports" ? "reports" : label === "Calendar" ? "calendar" : label === "Attendance" ? "attendance" : label === "Leave" ? "leave" : label === "Schedule" ? "schedule" : label === "Activity" ? "activity" : label === "Settings" ? "settings" : "overview";
 
 const apiBase = "http://localhost:8080/api/v1";
 
@@ -69,7 +78,106 @@ const navigation = [
   { label: "Schedule", icon: CalendarDays, permission: "shifts.read" },
   { label: "People", icon: UsersRound, permission: "users.read" },
   { label: "Activity", icon: Activity, permission: "organization.read" },
+  { label: "Settings", icon: SlidersHorizontal },
 ];
+
+// Dropdown is a fully custom, accessible replacement for native <select>.
+// Keyboard: Up/Down move, Enter/Space select, Escape closes, Home/End jump.
+// Colored swatches surface option colors (used for leave types, statuses, etc.).
+function Dropdown({ value, options, onChange, placeholder = "Select…", ariaLabel, disabled = false }: {
+  value: string;
+  options: DropdownOption[];
+  onChange: (value: string) => void;
+  placeholder?: string;
+  ariaLabel?: string;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = options.find((option) => option.value === value);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
+  useEffect(() => {
+    if (open) setActiveIndex(Math.max(0, options.findIndex((option) => option.value === value)));
+  }, [open, value, options]);
+
+  const commit = (index: number) => {
+    const option = options[index];
+    if (option) onChange(option.value);
+    setOpen(false);
+  };
+
+  const onKeyDown = (event: ReactKeyboardEvent) => {
+    if (disabled) return;
+    if (!open && (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      setOpen(true);
+      return;
+    }
+    if (!open) return;
+    if (event.key === "ArrowDown") { event.preventDefault(); setActiveIndex((index) => Math.min(options.length - 1, index + 1)); }
+    else if (event.key === "ArrowUp") { event.preventDefault(); setActiveIndex((index) => Math.max(0, index - 1)); }
+    else if (event.key === "Home") { event.preventDefault(); setActiveIndex(0); }
+    else if (event.key === "End") { event.preventDefault(); setActiveIndex(options.length - 1); }
+    else if (event.key === "Enter" || event.key === " ") { event.preventDefault(); commit(activeIndex); }
+    else if (event.key === "Escape") { event.preventDefault(); setOpen(false); }
+  };
+
+  return (
+    <div className={`dropdown ${disabled ? "disabled" : ""}`} ref={rootRef}>
+      <button type="button" className={`dropdown-trigger ${open ? "open" : ""}`} aria-haspopup="listbox" aria-expanded={open} aria-label={ariaLabel} disabled={disabled} onClick={() => !disabled && setOpen((value) => !value)} onKeyDown={onKeyDown}>
+        {selected?.color && <span className="dropdown-swatch" style={{ background: selected.color }} />}
+        <span className={selected ? "dropdown-value" : "dropdown-placeholder"}>{selected ? selected.label : placeholder}</span>
+        <ChevronDown size={15} className="dropdown-caret" aria-hidden="true" />
+      </button>
+      {open && (
+        <ul className="dropdown-menu" role="listbox" aria-label={ariaLabel} tabIndex={-1}>
+          {options.length === 0 && <li className="dropdown-empty">No options</li>}
+          {options.map((option, index) => (
+            <li
+              key={option.value}
+              role="option"
+              aria-selected={option.value === value}
+              className={`dropdown-option ${index === activeIndex ? "active" : ""} ${option.value === value ? "selected" : ""}`}
+              onMouseEnter={() => setActiveIndex(index)}
+              onMouseDown={(event) => { event.preventDefault(); commit(index); }}
+            >
+              {option.color && <span className="dropdown-swatch" style={{ background: option.color }} />}
+              <span className="dropdown-option-label">{option.label}</span>
+              {option.value === value && <Check size={14} className="dropdown-check" aria-hidden="true" />}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// useLookup loads an admin-managed option list (leave types, categories, …)
+// from the backend so dropdown contents are configurable rather than hardcoded.
+function useLookup(category: string): DropdownOption[] {
+  const [options, setOptions] = useState<DropdownOption[]>([]);
+  useEffect(() => {
+    let alive = true;
+    fetch(`${apiBase}/lookups/${category}`, { credentials: "include" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { options: LookupOption[] } | null) => {
+        if (alive && data) setOptions(data.options.map((option) => ({ value: option.value, label: option.label, color: option.color || undefined })));
+      })
+      .catch(() => { /* offline or unauthorized — dropdown simply stays empty */ });
+    return () => { alive = false; };
+  }, [category]);
+  return options;
+}
 
 function App() {
   const [theme, setTheme] = useState<Theme>(() => {
@@ -207,7 +315,7 @@ function App() {
           </div>
         </header>
 
-        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "projects" ? <ProjectsView /> : activeView === "approvals" ? <WorkflowView /> : activeView === "finance" ? <FinanceView /> : activeView === "hr" ? <HRView /> : activeView === "sales" ? <SalesView /> : activeView === "it" ? <ITView /> : activeView === "reports" ? <ReportsView /> : activeView === "calendar" ? <CalendarView /> : activeView === "attendance" ? <AttendanceView /> : activeView === "leave" ? <LeaveView /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : <section className="content-wrap">
+        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "projects" ? <ProjectsView /> : activeView === "approvals" ? <WorkflowView /> : activeView === "finance" ? <FinanceView /> : activeView === "hr" ? <HRView /> : activeView === "sales" ? <SalesView /> : activeView === "it" ? <ITView /> : activeView === "reports" ? <ReportsView /> : activeView === "calendar" ? <CalendarView /> : activeView === "attendance" ? <AttendanceView /> : activeView === "leave" ? <LeaveView /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : activeView === "settings" ? <SettingsView /> : <section className="content-wrap">
           <div className="page-heading">
             <div>
               <p className="eyebrow">Wednesday, 20 August 2026</p>
@@ -408,11 +516,14 @@ function LeaveView() {
   const [requests, setRequests] = useState<Array<LeaveRequest & LocalLeave>>([]);
   const [form, setForm] = useState({ leave_type: "annual", start_date: new Date().toISOString().slice(0, 10), end_date: new Date().toISOString().slice(0, 10), reason: "" });
   const [message, setMessage] = useState("");
+  const leaveTypes = useLookup("leave_type");
+  const labelFor = (value: string) => leaveTypes.find((option) => option.value === value)?.label ?? value;
+  const colorFor = (value: string) => leaveTypes.find((option) => option.value === value)?.color;
   const load = async () => { try { await syncPendingOperations(apiBase); const response = await fetch(`${apiBase}/leave`, { credentials: "include" }); if (!response.ok) throw new Error("offline"); const remote = await response.json() as Array<LeaveRequest & LocalLeave>; setRequests(remote); await cacheLeave(remote); } catch { try { setRequests(await getLocalLeave() as Array<LeaveRequest & LocalLeave>); } catch { setRequests([]); } } };
   useEffect(() => { void load(); const onOnline = () => void load(); window.addEventListener("online", onOnline); return () => window.removeEventListener("online", onOnline); }, []);
   const createRequest = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const now = new Date().toISOString(); const local: LocalLeave = { id: crypto.randomUUID(), requested_by: "local", leave_type: form.leave_type, start_date: form.start_date, end_date: form.end_date, reason: form.reason, status: "pending" }; try { const response = await fetch(`${apiBase}/leave`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) }); if (!response.ok) throw new Error("offline"); const saved = await response.json() as LeaveRequest & LocalLeave; setRequests((current) => [saved, ...current]); await cacheLeave([saved]); setMessage("Leave request submitted"); } catch { await queueOperation({ id: `leave:${local.id}`, entity: "leave", action: "create", payload: local, createdAt: now }); await cacheLeave([local]); setRequests((current) => [local, ...current]); setMessage("Saved offline · will sync when the server is reachable"); } setForm((current) => ({ ...current, reason: "" })); };
   const decide = async (id: string, action: "approve" | "reject") => { const response = await fetch(`${apiBase}/leave/${action}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }); setMessage(response.ok ? `Request ${action}d` : "You do not have permission to decide this request"); if (response.ok) void load(); };
-  return <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">Leave</p><h1>Plan time away.</h1><p className="lede">Requests stay visible to the team and move through a clear approval path.</p></div></div>{message && <p className="inline-message">{message}</p>}<form className="leave-form" onSubmit={createRequest}><p className="eyebrow">New request</p><div className="form-grid"><select value={form.leave_type} onChange={(event) => setForm({ ...form, leave_type: event.target.value })}><option value="annual">Annual leave</option><option value="sick">Sick leave</option><option value="personal">Personal leave</option><option value="unpaid">Unpaid leave</option></select><input type="date" value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} required /><input type="date" value={form.end_date} onChange={(event) => setForm({ ...form, end_date: event.target.value })} required /></div><input placeholder="Reason (optional)" value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} /><button className="primary-button" type="submit">Submit request</button></form><div className="section-heading task-heading"><div><p className="eyebrow">Requests</p><h2>{requests.length} requests</h2></div></div><div className="record-list">{requests.map((request) => <div className="record-row" key={request.id}><span className="record-avatar"><CalendarDays size={15} /></span><span className="record-copy"><strong>{request.display_name ?? "My request"} · {request.leave_type}</strong><small>{request.start_date} → {request.end_date}{request.reason ? ` · ${request.reason}` : ""}</small></span><span className={`status-pill leave-${request.status}`}>{request.status}</span>{request.status === "pending" && <span className="task-actions"><button className="text-button" type="button" onClick={() => void decide(request.id, "approve")}>Approve</button><button className="text-button muted" type="button" onClick={() => void decide(request.id, "reject")}>Reject</button></span>}</div>)}</div></section>;
+  return <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">Leave</p><h1>Plan time away.</h1><p className="lede">Requests stay visible to the team and move through a clear approval path.</p></div></div>{message && <p className="inline-message">{message}</p>}<form className="leave-form" onSubmit={createRequest}><p className="eyebrow">New request</p><div className="form-grid"><Dropdown value={form.leave_type} options={leaveTypes} onChange={(value) => setForm({ ...form, leave_type: value })} ariaLabel="Leave type" placeholder="Leave type" /><input type="date" value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} required /><input type="date" value={form.end_date} onChange={(event) => setForm({ ...form, end_date: event.target.value })} required /></div><input placeholder="Reason (optional)" value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} /><button className="primary-button" type="submit">Submit request</button></form><div className="section-heading task-heading"><div><p className="eyebrow">Requests</p><h2>{requests.length} requests</h2></div></div><div className="record-list">{requests.map((request) => <div className="record-row" key={request.id}><span className="record-avatar"><CalendarDays size={15} /></span><span className="record-copy"><strong>{request.display_name ?? "My request"} · <span className="leave-type-tag">{colorFor(request.leave_type) && <span className="dropdown-swatch" style={{ background: colorFor(request.leave_type) }} />}{labelFor(request.leave_type)}</span></strong><small>{request.start_date} → {request.end_date}{request.reason ? ` · ${request.reason}` : ""}</small></span><span className={`status-pill leave-${request.status}`}>{request.status}</span>{request.status === "pending" && <span className="task-actions"><button className="text-button" type="button" onClick={() => void decide(request.id, "approve")}>Approve</button><button className="text-button muted" type="button" onClick={() => void decide(request.id, "reject")}>Reject</button></span>}</div>)}</div></section>;
 }
 
 function ScheduleView() {
@@ -939,10 +1050,36 @@ function ProjectsView() {
   </section>;
 }
 
+type CalView = "month" | "week" | "day" | "agenda";
+const CAL_VIEWS: { key: CalView; label: string }[] = [
+  { key: "month", label: "Month" }, { key: "week", label: "Week" }, { key: "day", label: "Day" }, { key: "agenda", label: "Agenda" },
+];
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+const startOfWeek = (d: Date) => addDays(startOfDay(d), -((d.getDay() + 6) % 7)); // Monday-first
+const pad2 = (n: number) => String(n).padStart(2, "0");
+const dateKey = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const eventOverlapsDay = (event: CalendarEvent, day: Date) => {
+  const dayStart = startOfDay(day).getTime();
+  const dayEnd = dayStart + 86400000;
+  const start = new Date(event.starts_at).getTime();
+  const end = new Date(event.ends_at).getTime();
+  return start < dayEnd && end > dayStart;
+};
+const eventClass = (event: CalendarEvent) => (event.visibility === "private" ? "event-private" : "event-organization");
+const hhmm = (iso: string) => { const d = new Date(iso); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+
 function CalendarView() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [form, setForm] = useState({ title: "", starts_at: "", ends_at: "", all_day: false, visibility: "organization" });
+  const [view, setView] = useState<CalView>("month");
+  const [cursor, setCursor] = useState<Date>(() => startOfDay(new Date()));
   const [message, setMessage] = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ title: "", date: dateKey(new Date()), start: "09:00", end: "10:00", all_day: false, visibility: "organization" });
+  const today = startOfDay(new Date());
 
   const load = async () => {
     const response = await fetch(`${apiBase}/calendar/events`, { credentials: "include" });
@@ -950,24 +1087,149 @@ function CalendarView() {
   };
   useEffect(() => { void load(); }, []);
 
+  const openComposer = (date: Date, hour?: number) => {
+    setForm((current) => ({ ...current, date: dateKey(date), start: hour != null ? `${pad2(hour)}:00` : current.start, end: hour != null ? `${pad2(Math.min(hour + 1, 23))}:00` : current.end }));
+    setShowForm(true);
+  };
+
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const body = { title: form.title, all_day: form.all_day, visibility: form.visibility, starts_at: new Date(form.starts_at).toISOString(), ends_at: new Date(form.ends_at).toISOString() };
+    const starts = form.all_day ? new Date(`${form.date}T00:00`) : new Date(`${form.date}T${form.start}`);
+    const ends = form.all_day ? new Date(`${form.date}T23:59`) : new Date(`${form.date}T${form.end}`);
+    const body = { title: form.title, all_day: form.all_day, visibility: form.visibility, starts_at: starts.toISOString(), ends_at: ends.toISOString() };
     const response = await fetch(`${apiBase}/calendar/events`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     if (!response.ok) { setMessage((await response.json()).error?.message ?? "Could not create event"); return; }
     const data = await response.json() as { conflict: boolean };
     setMessage(data.conflict ? "Event created · note: it overlaps another of your events" : "Event created");
-    setForm({ title: "", starts_at: "", ends_at: "", all_day: false, visibility: "organization" });
+    setForm((current) => ({ ...current, title: "" }));
+    setShowForm(false);
     await load();
   };
 
-  return <section className="content-wrap">
-    <div className="page-heading"><div><p className="eyebrow">Schedule</p><h1>Calendar.</h1><p className="lede">Shared events for the organization, with conflict detection on your own schedule.</p></div></div>
+  const shift = (direction: number) => {
+    if (view === "month") setCursor((d) => new Date(d.getFullYear(), d.getMonth() + direction, 1));
+    else if (view === "week") setCursor((d) => addDays(d, 7 * direction));
+    else setCursor((d) => addDays(d, direction)); // day + agenda step by day
+  };
+
+  const title = view === "month" ? `${MONTHS[cursor.getMonth()]} ${cursor.getFullYear()}`
+    : view === "week" ? (() => { const start = startOfWeek(cursor); const end = addDays(start, 6); return `${MONTHS[start.getMonth()].slice(0, 3)} ${start.getDate()} – ${MONTHS[end.getMonth()].slice(0, 3)} ${end.getDate()}, ${end.getFullYear()}`; })()
+    : view === "day" ? `${WEEKDAYS[(cursor.getDay() + 6) % 7]}, ${MONTHS[cursor.getMonth()]} ${cursor.getDate()}, ${cursor.getFullYear()}`
+    : "Agenda";
+
+  return <section className="content-wrap calendar-wrap">
+    <div className="page-heading"><div><p className="eyebrow">Schedule</p><h1>Calendar.</h1><p className="lede">Shared events across the organization, with conflict detection on your own schedule.</p></div></div>
     {message && <p className="inline-message">{message}</p>}
-    <div className="section-heading task-heading"><div><p className="eyebrow">Upcoming</p><h2>{events.length} events</h2></div></div>
-    <div className="record-list">{events.map((item) => <div className="record-row" key={item.id}><span className="record-avatar department-avatar"><CalendarDays size={15} /></span><span className="record-copy"><strong>{item.title}</strong><small>{new Date(item.starts_at).toLocaleString()} → {new Date(item.ends_at).toLocaleString()}{item.creator_name ? ` · ${item.creator_name}` : ""}</small></span><span className="status-pill">{item.visibility}</span></div>)}</div>
-    <form className="leave-form" onSubmit={create}><p className="eyebrow">New event</p><input placeholder="Event title" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required /><div className="form-grid"><input type="datetime-local" value={form.starts_at} onChange={(event) => setForm({ ...form, starts_at: event.target.value })} required /><input type="datetime-local" value={form.ends_at} onChange={(event) => setForm({ ...form, ends_at: event.target.value })} required /><select value={form.visibility} onChange={(event) => setForm({ ...form, visibility: event.target.value })}><option value="organization">Organization</option><option value="private">Private</option></select></div><label className="calendar-allday"><input type="checkbox" checked={form.all_day} onChange={(event) => setForm({ ...form, all_day: event.target.checked })} /> All day</label><button className="primary-button" type="submit">Add event</button></form>
+    <div className="calendar-toolbar">
+      <div className="calendar-nav">
+        <button type="button" className="cal-today" onClick={() => setCursor(startOfDay(new Date()))}>Today</button>
+        <button type="button" className="cal-arrow" aria-label="Previous" onClick={() => shift(-1)}><ChevronLeft size={17} /></button>
+        <button type="button" className="cal-arrow" aria-label="Next" onClick={() => shift(1)}><ChevronRight size={17} /></button>
+        <h2 className="calendar-title">{title}</h2>
+      </div>
+      <div className="calendar-toolbar-right">
+        <div className="segmented" role="tablist" aria-label="Calendar view">
+          {CAL_VIEWS.map((option) => (
+            <button key={option.key} type="button" role="tab" aria-selected={view === option.key} className={`segmented-item ${view === option.key ? "active" : ""}`} onClick={() => setView(option.key)}>{option.label}</button>
+          ))}
+        </div>
+        <button type="button" className="primary-button" onClick={() => openComposer(view === "month" ? today : cursor)}><Plus size={15} /> New event</button>
+      </div>
+    </div>
+
+    {view === "month" && <CalendarMonth cursor={cursor} today={today} events={events} onPickDay={(day) => openComposer(day)} />}
+    {(view === "week" || view === "day") && <CalendarTimeGrid days={view === "day" ? [cursor] : Array.from({ length: 7 }, (_, i) => addDays(startOfWeek(cursor), i))} today={today} events={events} onPickSlot={openComposer} />}
+    {view === "agenda" && <CalendarAgenda events={events} today={today} />}
+
+    {showForm && (
+      <div className="cal-composer-backdrop" onMouseDown={() => setShowForm(false)}>
+        <form className="cal-composer" onSubmit={create} onMouseDown={(event) => event.stopPropagation()}>
+          <div className="cal-composer-head"><p className="eyebrow">New event</p><button type="button" className="icon-button" aria-label="Close" onClick={() => setShowForm(false)}>✕</button></div>
+          <input className="cal-input" placeholder="Event title" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required autoFocus />
+          <label className="cal-field"><span>Date</span><input className="cal-input" type="date" value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} required /></label>
+          {!form.all_day && <div className="cal-field-row">
+            <label className="cal-field"><span>Start</span><input className="cal-input" type="time" value={form.start} onChange={(event) => setForm({ ...form, start: event.target.value })} required /></label>
+            <label className="cal-field"><span>End</span><input className="cal-input" type="time" value={form.end} onChange={(event) => setForm({ ...form, end: event.target.value })} required /></label>
+          </div>}
+          <label className="cal-field"><span>Visibility</span><Dropdown value={form.visibility} onChange={(value) => setForm({ ...form, visibility: value })} ariaLabel="Visibility" options={[{ value: "organization", label: "Organization", color: "#2d6a58" }, { value: "private", label: "Private", color: "#6b4fa5" }]} /></label>
+          <label className="cal-allday"><input type="checkbox" checked={form.all_day} onChange={(event) => setForm({ ...form, all_day: event.target.checked })} /> All day</label>
+          <button className="primary-button cal-submit" type="submit">Add event</button>
+        </form>
+      </div>
+    )}
   </section>;
+}
+
+function CalendarMonth({ cursor, today, events, onPickDay }: { cursor: Date; today: Date; events: CalendarEvent[]; onPickDay: (day: Date) => void }) {
+  const days = useMemo(() => {
+    const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+    const gridStart = startOfWeek(first);
+    return Array.from({ length: 42 }, (_, i) => addDays(gridStart, i));
+  }, [cursor]);
+  return <div className="cal-month">
+    <div className="cal-month-header">{WEEKDAYS.map((weekday) => <div key={weekday} className="cal-weekday">{weekday}</div>)}</div>
+    <div className="cal-month-grid">
+      {days.map((day) => {
+        const dayEvents = events.filter((event) => eventOverlapsDay(event, day)).sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+        const outside = day.getMonth() !== cursor.getMonth();
+        return <div key={dateKey(day)} className={`cal-cell ${outside ? "outside" : ""} ${sameDay(day, today) ? "today" : ""}`} onClick={() => onPickDay(day)}>
+          <span className="cal-daynum">{day.getDate()}</span>
+          <div className="cal-cell-events">
+            {dayEvents.slice(0, 3).map((event) => <button key={event.id} type="button" className={`cal-chip ${eventClass(event)}`} onClick={(clickEvent) => clickEvent.stopPropagation()} title={`${event.title} · ${hhmm(event.starts_at)}`}>{!event.all_day && <span className="cal-chip-time">{hhmm(event.starts_at)}</span>}<span className="cal-chip-title">{event.title}</span></button>)}
+            {dayEvents.length > 3 && <span className="cal-more">+{dayEvents.length - 3} more</span>}
+          </div>
+        </div>;
+      })}
+    </div>
+  </div>;
+}
+
+function CalendarTimeGrid({ days, today, events, onPickSlot }: { days: Date[]; today: Date; events: CalendarEvent[]; onPickSlot: (day: Date, hour: number) => void }) {
+  const hours = Array.from({ length: 24 }, (_, i) => i);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = 7 * 48; }, [days.length]);
+  return <div className="cal-timegrid">
+    <div className="cal-timegrid-head">
+      <div className="cal-gutter-corner" />
+      {days.map((day) => <div key={dateKey(day)} className={`cal-daycol-head ${sameDay(day, today) ? "today" : ""}`}><span className="cal-dayname">{WEEKDAYS[(day.getDay() + 6) % 7]}</span><span className="cal-daydate">{day.getDate()}</span></div>)}
+    </div>
+    <div className="cal-timegrid-body" ref={scrollRef}>
+      <div className="cal-gutter">{hours.map((hour) => <div key={hour} className="cal-hour-label">{hour === 0 ? "" : `${pad2(hour)}:00`}</div>)}</div>
+      {days.map((day) => {
+        const timed = events.filter((event) => !event.all_day && eventOverlapsDay(event, day));
+        return <div key={dateKey(day)} className="cal-daycol">
+          {hours.map((hour) => <div key={hour} className="cal-slot" onClick={() => onPickSlot(day, hour)} />)}
+          {timed.map((event) => {
+            const start = new Date(event.starts_at); const end = new Date(event.ends_at);
+            const startHours = sameDay(start, day) ? start.getHours() + start.getMinutes() / 60 : 0;
+            const endHours = sameDay(end, day) ? end.getHours() + end.getMinutes() / 60 : 24;
+            const top = startHours * 48; const height = Math.max(22, (endHours - startHours) * 48);
+            return <div key={event.id} className={`cal-event ${eventClass(event)}`} style={{ top: `${top}px`, height: `${height}px` }} title={event.title}><strong>{event.title}</strong><span>{hhmm(event.starts_at)}–{hhmm(event.ends_at)}</span></div>;
+          })}
+        </div>;
+      })}
+    </div>
+  </div>;
+}
+
+function CalendarAgenda({ events, today }: { events: CalendarEvent[]; today: Date }) {
+  const upcoming = [...events].filter((event) => new Date(event.ends_at) >= today).sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+  const groups = new Map<string, CalendarEvent[]>();
+  for (const event of upcoming) {
+    const key = dateKey(new Date(event.starts_at));
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(event);
+  }
+  if (upcoming.length === 0) return <div className="cal-agenda-empty">No upcoming events.</div>;
+  return <div className="cal-agenda">
+    {[...groups.entries()].map(([key, dayEvents]) => {
+      const date = new Date(`${key}T00:00`);
+      return <div key={key} className="cal-agenda-day">
+        <div className="cal-agenda-date"><strong>{date.getDate()}</strong><span>{WEEKDAYS[(date.getDay() + 6) % 7]}<small>{MONTHS[date.getMonth()].slice(0, 3)}</small></span></div>
+        <div className="cal-agenda-events">{dayEvents.map((event) => <div key={event.id} className={`cal-agenda-row ${eventClass(event)}`}><span className="cal-agenda-dot" /><span className="cal-agenda-copy"><strong>{event.title}</strong><small>{event.all_day ? "All day" : `${hhmm(event.starts_at)} – ${hhmm(event.ends_at)}`}{event.creator_name ? ` · ${event.creator_name}` : ""}</small></span><span className="status-pill">{event.visibility}</span></div>)}</div>
+      </div>;
+    })}
+  </div>;
 }
 
 function WorkflowView() {
@@ -1247,6 +1509,56 @@ function AuthScreen({ mode, theme, onThemeToggle, onAuthenticated }: { mode: "se
     </section>
     <button className="theme-switcher" type="button" onClick={onThemeToggle} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}>{theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}<span>{theme === "dark" ? "Light" : "Dark"}</span></button>
   </main>;
+}
+
+function SettingsView() {
+  const [catalog, setCatalog] = useState<LookupCatalogItem[]>([]);
+  useEffect(() => {
+    fetch(`${apiBase}/lookups`, { credentials: "include" }).then((response) => (response.ok ? response.json() : [])).then(setCatalog).catch(() => { /* offline */ });
+  }, []);
+  const editable = [...catalog].filter((item) => item.editable).sort((a, b) => a.title.localeCompare(b.title));
+  const locked = catalog.filter((item) => !item.editable);
+  return <section className="content-wrap">
+    <div className="page-heading"><div><p className="eyebrow">Configuration</p><h1>Settings.</h1><p className="lede">Manage the dropdown lists used across the workspace. Changes apply to everyone in your organization.</p></div></div>
+    {catalog.length > 0 && editable.length === 0 && <p className="lede" style={{ marginTop: 40 }}>You don't have permission to edit any lists yet. Ask an administrator for access.</p>}
+    <div className="settings-grid">
+      {editable.map((item) => <LookupEditor key={item.category} item={item} />)}
+    </div>
+    {locked.length > 0 && <div className="settings-locked"><p className="eyebrow">Managed by other roles</p><div className="settings-locked-list">{locked.map((item) => <span key={item.category} className="settings-locked-item">{item.title}<small>{item.permission}</small></span>)}</div></div>}
+  </section>;
+}
+
+function LookupEditor({ item }: { item: LookupCatalogItem }) {
+  const [options, setOptions] = useState<LookupOption[]>([]);
+  const [label, setLabel] = useState("");
+  const [color, setColor] = useState("#2d6a58");
+  const [message, setMessage] = useState("");
+  const load = async () => { const response = await fetch(`${apiBase}/lookups/${item.category}`, { credentials: "include" }); if (response.ok) setOptions((await response.json()).options); };
+  useEffect(() => { void load(); }, []);
+  const add = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!label.trim()) return;
+    const response = await fetch(`${apiBase}/lookups/${item.category}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label, color }) });
+    if (response.ok) { setLabel(""); setMessage(""); await load(); } else setMessage((await response.json()).error ?? "Could not add option");
+  };
+  const remove = async (id: string) => { const response = await fetch(`${apiBase}/lookup-options/${id}`, { method: "DELETE", credentials: "include" }); if (response.ok) await load(); };
+  return <div className="settings-card">
+    <div className="settings-card-head"><h3>{item.title}</h3><span className="settings-count">{options.length}</span></div>
+    <ul className="settings-options">
+      {options.map((option) => <li key={option.id} className="settings-option">
+        <span className="dropdown-swatch" style={{ background: option.color || "var(--faint)" }} />
+        <span className="settings-option-label">{option.label}</span>
+        <code>{option.value}</code>
+        <button type="button" className="icon-button danger" aria-label={`Remove ${option.label}`} onClick={() => void remove(option.id)}><Trash2 size={14} /></button>
+      </li>)}
+    </ul>
+    {message && <p className="form-error">{message}</p>}
+    <form className="settings-add" onSubmit={add}>
+      <input className="cal-input" placeholder="Add option…" value={label} onChange={(event) => setLabel(event.target.value)} />
+      <input className="settings-color" type="color" value={color} onChange={(event) => setColor(event.target.value)} aria-label="Color" />
+      <button type="submit" className="icon-button add" aria-label="Add option"><Plus size={16} /></button>
+    </form>
+  </div>;
 }
 
 function Metric({ label, value, change, detail, warning = false }: { label: string; value: string; change: string; detail: string; warning?: boolean }) {
