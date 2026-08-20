@@ -557,16 +557,64 @@ function PeopleView() {
   const createRole = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const response = await fetch(`${apiBase}/roles`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(roleForm) }); if (!response.ok) { setMessage("Role could not be created"); return; } setRoleForm({ code: "", name: "", permissions: [] }); setMessage("Role created"); await load(); };
   const assignRole = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const response = await fetch(`${apiBase}/user-roles`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(assignment) }); setMessage(response.ok ? "Role assigned" : "Role could not be assigned"); };
 
+  const resetPassword = async (user: UserRecord) => {
+    const newPassword = window.prompt(`Set a new temporary password for ${user.display_name} (12+ characters). Their sessions will be signed out.`);
+    if (!newPassword) return;
+    const response = await fetch(`${apiBase}/users/${user.id}/reset-password`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ new_password: newPassword }) });
+    setMessage(response.ok ? `Password reset for ${user.display_name}` : ((await response.json()).error ?? "Could not reset password"));
+  };
+  const offboard = async (user: UserRecord) => {
+    if (!window.confirm(`Offboard ${user.display_name}? This revokes their sessions, roles, and MFA immediately.`)) return;
+    const response = await fetch(`${apiBase}/users/${user.id}/offboard`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+    setMessage(response.ok ? `${user.display_name} offboarded` : ((await response.json()).error ?? "Could not offboard"));
+    if (response.ok) await load();
+  };
+
   return <section className="content-wrap">
     <div className="page-heading"><div><p className="eyebrow">Organization</p><h1>People & teams.</h1><p className="lede">Manage the people and departments in this private installation.</p></div><button className="primary-button" type="button" onClick={() => setShowUserForm((value) => !value)}>{showUserForm ? "Close form" : "Add person"}</button></div>
     {message && <p className="inline-message">{message}</p>}
     <div className="people-grid">
-      <div className="people-section"><div className="section-heading"><div><p className="eyebrow">Directory</p><h2>{users.length} people</h2></div></div><div className="record-list">{users.map((user) => <div className="record-row" key={user.id}><span className="record-avatar">{user.display_name.slice(0, 1).toUpperCase()}</span><span className="record-copy"><strong>{user.display_name}</strong><small>{user.email}</small></span><span className="status-pill">{user.status}</span></div>)}</div></div>
+      <div className="people-section"><div className="section-heading"><div><p className="eyebrow">Directory</p><h2>{users.length} people</h2></div></div><div className="record-list">{users.map((user) => <div className="record-row" key={user.id}><span className="record-avatar">{user.display_name.slice(0, 1).toUpperCase()}</span><span className="record-copy"><strong>{user.display_name}</strong><small>{user.email}</small></span><span className={`status-pill ${user.status === "offboarded" ? "leave-rejected" : ""}`}>{user.status}</span>{user.status !== "offboarded" && <span className="record-actions"><button className="text-button muted" type="button" onClick={() => void resetPassword(user)}>Reset</button><button className="text-button muted" type="button" onClick={() => void offboard(user)}>Offboard</button></span>}</div>)}</div></div>
       <div className="people-section"><div className="section-heading"><div><p className="eyebrow">Structure</p><h2>{departments.length} departments</h2></div></div><form className="compact-form" onSubmit={createDepartment}><input value={departmentForm.name} onChange={(event) => setDepartmentForm({ ...departmentForm, name: event.target.value })} placeholder="Department name" required /><input value={departmentForm.slug} onChange={(event) => setDepartmentForm({ ...departmentForm, slug: event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-") })} placeholder="slug" required /><button className="text-button" type="submit">Add department <ArrowUpRight size={15} /></button></form><div className="record-list">{departments.map((department) => <div className="record-row" key={department.id}><span className="record-avatar department-avatar"><BriefcaseBusiness size={15} /></span><span className="record-copy"><strong>{department.name}</strong><small>{department.slug}</small></span></div>)}</div></div>
     </div>
     {showUserForm && <form className="user-form" onSubmit={createUser}><p className="eyebrow">New person</p><div className="form-grid"><input value={userForm.display_name} onChange={(event) => setUserForm({ ...userForm, display_name: event.target.value })} placeholder="Full name" required /><input type="email" value={userForm.email} onChange={(event) => setUserForm({ ...userForm, email: event.target.value })} placeholder="Email" required /><input type="password" value={userForm.password} onChange={(event) => setUserForm({ ...userForm, password: event.target.value })} placeholder="Temporary password (12+ characters)" minLength={12} required /></div><button className="primary-button" type="submit">Create person</button></form>}
     {roles.length > 0 && <div className="rbac-panel"><div className="section-heading"><div><p className="eyebrow">Access control</p><h2>{roles.length} roles</h2></div></div><div className="record-list">{roles.map((role) => <div className="record-row" key={role.id}><span className="record-avatar">R</span><span className="record-copy"><strong>{role.name}</strong><small>{role.code} · {role.permissions.length} permissions</small></span></div>)}</div><form className="compact-form role-form" onSubmit={createRole}><p className="eyebrow">Create role</p><div className="form-grid"><input placeholder="Role code" value={roleForm.code} onChange={(event) => setRoleForm({ ...roleForm, code: event.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, "-") })} required /><input placeholder="Role name" value={roleForm.name} onChange={(event) => setRoleForm({ ...roleForm, name: event.target.value })} required /></div><div className="permission-grid">{permissions.map((permission) => <label key={permission.code}><input type="checkbox" checked={roleForm.permissions.includes(permission.code)} onChange={(event) => setRoleForm({ ...roleForm, permissions: event.target.checked ? [...roleForm.permissions, permission.code] : roleForm.permissions.filter((code) => code !== permission.code) })} />{permission.code}</label>)}</div><button className="primary-button" type="submit">Create role</button></form><form className="compact-form role-form" onSubmit={assignRole}><p className="eyebrow">Assign role</p><div className="form-grid"><select value={assignment.user_id} onChange={(event) => setAssignment({ ...assignment, user_id: event.target.value })} required><option value="">Select person</option>{users.map((user) => <option key={user.id} value={user.id}>{user.display_name}</option>)}</select><select value={assignment.role_id} onChange={(event) => setAssignment({ ...assignment, role_id: event.target.value })} required><option value="">Select role</option>{roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></div><button className="text-button" type="submit">Assign role <ArrowUpRight size={15} /></button></form></div>}
+    <SecurityPanel />
   </section>;
+}
+
+function SecurityPanel() {
+  const [passwordForm, setPasswordForm] = useState({ current_password: "", new_password: "" });
+  const [enrollment, setEnrollment] = useState<{ secret: string; otpauth_uri: string } | null>(null);
+  const [mfaCode, setMfaCode] = useState("");
+  const [message, setMessage] = useState("");
+
+  const changePassword = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const response = await fetch(`${apiBase}/auth/change-password`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(passwordForm) });
+    setMessage(response.ok ? "Password changed · other sessions signed out" : ((await response.json()).error ?? "Could not change password"));
+    if (response.ok) setPasswordForm({ current_password: "", new_password: "" });
+  };
+  const startEnrollment = async () => {
+    const response = await fetch(`${apiBase}/auth/mfa/enroll`, { method: "POST", credentials: "include" });
+    if (response.ok) { setEnrollment(await response.json()); setMessage("Scan the secret in your authenticator app, then enter a code to confirm."); } else setMessage("Could not start MFA enrollment");
+  };
+  const verifyEnrollment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const response = await fetch(`${apiBase}/auth/mfa/verify`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: mfaCode }) });
+    setMessage(response.ok ? "Two-factor authentication enabled" : ((await response.json()).error ?? "Invalid code"));
+    if (response.ok) { setEnrollment(null); setMfaCode(""); }
+  };
+
+  return <div className="rbac-panel">
+    <div className="section-heading"><div><p className="eyebrow">Your account security</p><h2>Password & two-factor</h2></div></div>
+    {message && <p className="inline-message">{message}</p>}
+    <form className="compact-form role-form" onSubmit={changePassword}><p className="eyebrow">Change your password</p><div className="form-grid"><input type="password" placeholder="Current password" value={passwordForm.current_password} onChange={(event) => setPasswordForm({ ...passwordForm, current_password: event.target.value })} required /><input type="password" placeholder="New password (12+ characters)" minLength={12} value={passwordForm.new_password} onChange={(event) => setPasswordForm({ ...passwordForm, new_password: event.target.value })} required /></div><button className="primary-button" type="submit">Update password</button></form>
+    <div className="role-form">
+      <p className="eyebrow">Two-factor authentication</p>
+      {!enrollment ? <button className="text-button" type="button" onClick={() => void startEnrollment()}>Enable authenticator app <ArrowUpRight size={15} /></button> : <form className="compact-form" onSubmit={verifyEnrollment}><p className="lede" style={{ fontSize: 12 }}>Secret: <code>{enrollment.secret}</code></p><input inputMode="numeric" placeholder="6-digit code" value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/[^0-9]/g, "").slice(0, 6))} required /><button className="primary-button" type="submit">Confirm & enable</button></form>}
+    </div>
+  </div>;
 }
 
 function LoadingScreen() {
@@ -579,6 +627,8 @@ function AuthScreen({ mode, theme, onThemeToggle, onAuthenticated }: { mode: "se
   const [name, setName] = useState("");
   const [organizationName, setOrganizationName] = useState("");
   const [organizationSlug, setOrganizationSlug] = useState("");
+  const [code, setCode] = useState("");
+  const [mfaRequired, setMfaRequired] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -592,8 +642,16 @@ function AuthScreen({ mode, theme, onThemeToggle, onAuthenticated }: { mode: "se
         if (!setupResponse.ok) throw new Error((await setupResponse.json()).error ?? "Could not complete setup");
       }
 
-      const loginResponse = await fetch(`${apiBase}/auth/login`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
-      if (!loginResponse.ok) throw new Error((await loginResponse.json()).error ?? "Could not sign in");
+      const loginResponse = await fetch(`${apiBase}/auth/login`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password, code }) });
+      if (!loginResponse.ok) {
+        const body = await loginResponse.json();
+        if (body.mfa_required) {
+          setMfaRequired(true);
+          setError(code ? "Invalid verification code" : "Enter the code from your authenticator app");
+          return;
+        }
+        throw new Error(body.error ?? "Could not sign in");
+      }
       const meResponse = await fetch(`${apiBase}/auth/me`, { credentials: "include" });
       if (!meResponse.ok) throw new Error("Could not load your account");
       onAuthenticated(await meResponse.json());
@@ -611,8 +669,9 @@ function AuthScreen({ mode, theme, onThemeToggle, onAuthenticated }: { mode: "se
         {mode === "setup" && <><label>Company name<input value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} placeholder="Acme Company" required /></label><label>Company slug<input value={organizationSlug} onChange={(event) => setOrganizationSlug(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))} placeholder="acme-company" required /></label><label>Your name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Lucas Marshall" required /></label></>}
         <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" required /></label>
         <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 12 characters" minLength={12} required /></label>
+        {mfaRequired && <label>Verification code<input inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(event) => setCode(event.target.value.replace(/[^0-9]/g, "").slice(0, 6))} placeholder="6-digit code" required /></label>}
         {error && <p className="form-error" role="alert">{error}</p>}
-        <button className="primary-button submit-button" type="submit" disabled={submitting}>{submitting ? "Connecting…" : mode === "setup" ? "Create workspace" : "Sign in"}</button>
+        <button className="primary-button submit-button" type="submit" disabled={submitting}>{submitting ? "Connecting…" : mode === "setup" ? "Create workspace" : mfaRequired ? "Verify & sign in" : "Sign in"}</button>
       </form>
       <p className="auth-footnote">Your data stays on this company's private installation.</p>
     </section>

@@ -83,6 +83,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .workflow-composer { grid-template-columns: 200px 1fr 160px auto; }
 .workflow-actions { display: flex; align-items: center; gap: 12px; margin-top: 16px; flex-wrap: wrap; }.workflow-actions input { flex: 1; min-width: 220px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); padding: 10px 12px; font: inherit; font-size: 11px; }.workflow-actions input:focus { border-color: var(--accent); outline: none; }
 .workflow-step-row { display: grid; grid-template-columns: 1.4fr 1.4fr .7fr .8fr .8fr auto; gap: 8px; align-items: center; margin-bottom: 10px; }.workflow-step-row input { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); padding: 10px 11px; font: inherit; font-size: 11px; }.workflow-step-row input:focus { border-color: var(--accent); outline: none; }
+.record-actions { display: flex; align-items: center; gap: 12px; margin-left: 14px; }.record-actions .text-button { font-size: 11px; }
 
 /* Tablet: tighten the shell and let the two-column people grid stack. */
 @media (max-width: 1080px) {

@@ -13,6 +13,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"name/backend/internal/mfa"
 )
 
 const sessionCookieName = "name_session"
@@ -43,6 +45,7 @@ type setupRequest struct {
 type loginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	Code     string `json:"code"`
 }
 
 type userResponse struct {
@@ -140,6 +143,19 @@ func (h Handler) Login(w http.ResponseWriter, r *http.Request) {
 	if err := h.DB.QueryRow(r.Context(), `SELECT id, organization_id, password_hash FROM users WHERE email = lower($1) AND status = 'active'`, strings.TrimSpace(input.Email)).Scan(&userID, &organizationID, &passwordHash); err != nil || passwordHash == "" || !VerifyPassword(input.Password, passwordHash) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid email or password"})
 		return
+	}
+
+	// Enforce MFA when the account has enrolled and confirmed it.
+	var mfaSecret string
+	if err := h.DB.QueryRow(r.Context(), `SELECT secret FROM user_mfa WHERE user_id = $1 AND enabled = TRUE`, userID).Scan(&mfaSecret); err == nil && mfaSecret != "" {
+		if strings.TrimSpace(input.Code) == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "a verification code is required", "mfa_required": true})
+			return
+		}
+		if !mfa.Validate(mfaSecret, input.Code, time.Now()) {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid verification code", "mfa_required": true})
+			return
+		}
 	}
 
 	tokenBytes := make([]byte, 32)

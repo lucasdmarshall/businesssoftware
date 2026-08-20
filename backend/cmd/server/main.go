@@ -79,6 +79,13 @@ func main() {
 	mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)
 	mux.HandleFunc("POST /api/v1/auth/logout", authHandler.Logout)
 	mux.HandleFunc("GET /api/v1/auth/me", authHandler.Me)
+	mux.HandleFunc("POST /api/v1/auth/change-password", authHandler.ChangePassword)
+	mux.HandleFunc("POST /api/v1/auth/mfa/enroll", authHandler.EnrollMFA)
+	mux.HandleFunc("POST /api/v1/auth/mfa/verify", authHandler.VerifyMFA)
+	mux.HandleFunc("POST /api/v1/auth/mfa/disable", authHandler.DisableMFA)
+	mux.Handle("POST /api/v1/users/{id}/reset-password", authHandler.RequirePermission("users.manage", http.HandlerFunc(authHandler.ResetPassword)))
+	mux.Handle("POST /api/v1/users/{id}/offboard", authHandler.RequirePermission("users.manage", http.HandlerFunc(authHandler.OffboardUser)))
+	mux.Handle("POST /api/v1/user-roles/unassign", authHandler.RequirePermission("roles.manage", http.HandlerFunc(authHandler.UnassignRole)))
 	syncHandler := sync.Handler{DB: pool, Auth: authHandler}
 	mux.HandleFunc("POST /api/v1/sync/push", syncHandler.Push)
 	mux.HandleFunc("GET /api/v1/sync/pull", syncHandler.Pull)

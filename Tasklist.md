@@ -76,10 +76,10 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Implement logout and session revocation
 - [x] Implement session management
 - [x] Implement Argon2id password hashing
-- [ ] Implement password reset flow
-- [ ] Add privileged-user MFA foundation
-- [ ] Implement organization membership
-- [ ] Implement department membership
+- [x] Implement password reset flow (admin reset + self-service change; revokes sessions)
+- [x] Add privileged-user MFA foundation (RFC 6238 TOTP: enroll, verify, disable, login enforcement)
+- [x] Implement organization membership (org-scoped users)
+- [x] Implement department membership (user_departments + primary department)
 - [x] Create roles and permissions schema
 - [x] Seed owner role and base permissions
 - [x] Implement roles and permissions management API
@@ -97,8 +97,8 @@ This is the master implementation checklist for the installable enterprise busin
 - [ ] Implement team scope and scope-aware dashboards
 - [x] Add backend authorization middleware
 - [x] Add permission checks for organization, user, and department endpoints
-- [ ] Add permission-change audit history
-- [ ] Add offboarding access revocation
+- [x] Add permission-change audit history (role assign/unassign and RBAC events recorded)
+- [x] Add offboarding access revocation (status, session revocation, role and MFA removal)
 - [x] Add protected route and UI permission handling
 - [x] Add role management UI
 - [x] Add frontend capability-aware role/permission loading

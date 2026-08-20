@@ -149,6 +149,9 @@ Completed in this milestone:
 - Phase 2 platform core: reporting-line model, job-title/position models (job title, position, department, manager, permission role, and data scope kept as separate concepts), and a generic `files` model (migration `015_org_structure_and_files.sql`)
 - Phase 2 APIs added: job-title catalogue list/create, user placement (job title + primary department), reporting-line list/create with single-primary enforcement, and organization file listing
 - Backend conventions established: `internal/httpapi` shared JSON/error helpers with a `{ "error": { code, message } }` shape, a `log/slog` JSON logger, and request-logging middleware; documented in `docs/DEVELOPMENT.md`
+- Phase 3 security completed (except team scope): privileged-user MFA foundation (RFC 6238 TOTP with enroll/verify/disable and login enforcement, `internal/mfa`, migration `016_mfa_and_security.sql`), admin password reset and self-service password change (both revoke sessions), offboarding access revocation (status + session/role/MFA removal), and role unassignment for permission-change audit history
+- Login now enforces MFA when enabled and returns `mfa_required`; the auth screen collects the code, People adds admin reset/offboard actions, and a Security panel lets users change their password and enroll TOTP
+- MFA TOTP validated against the RFC 6238 test vector; new Go test packages cover TOTP and the httpapi helpers
 
 Next actions:
 
