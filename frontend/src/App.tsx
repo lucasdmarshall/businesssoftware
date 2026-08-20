@@ -2532,42 +2532,198 @@ function HRView() {
 }
 
 function SalesView() {
-  const [leads, setLeads] = useState<Array<{ id: string; name: string; contact_email: string; source: string; status: string; owner_name: string }>>([]);
-  const [opps, setOpps] = useState<Array<{ id: string; name: string; stage: string; amount: number; currency: string; company_name: string; owner_name: string }>>([]);
+  const [tab, setTab] = useState("pipeline");
+  const [leads, setLeads] = useState<Array<{ id: string; name: string; contact_email: string; source: string; status: string; owner_name: string; company_id: string; converted_opportunity_id: string }>>([]);
+  const [opps, setOpps] = useState<Array<{ id: string; name: string; stage: string; amount: number; currency: string; probability: number; close_date: string; company_id: string; company_name: string; owner_name: string }>>([]);
   const [companies, setCompanies] = useState<Array<{ id: string; name: string; industry: string; website: string }>>([]);
-  const [leadForm, setLeadForm] = useState({ name: "", contact_email: "", source: "website" });
-  const [oppForm, setOppForm] = useState({ name: "", amount: "", company_id: "" });
-  const [companyForm, setCompanyForm] = useState({ name: "", industry: "" });
+  const [contacts, setContacts] = useState<Array<{ id: string; name: string; email: string; phone: string; title: string; company_id: string; company_name: string }>>([]);
+  const [activities, setActivities] = useState<Array<{ id: string; entity_type: string; entity_id: string; kind: string; note: string; author_name: string; created_at: string }>>([]);
+  const [summary, setSummary] = useState<{ open_count: number; open_value: number; weighted_value: number; won_count: number; won_value: number; lead_open: number; currency: string; stages: Array<{ stage: string; count: number; amount: number }> } | null>(null);
+  const [leadForm, setLeadForm] = useState({ name: "", contact_email: "", source: "website", company_id: "" });
+  const [oppForm, setOppForm] = useState({ name: "", amount: "", company_id: "", close_date: "", stage: "prospect" });
+  const [companyForm, setCompanyForm] = useState({ name: "", industry: "", website: "" });
+  const [contactForm, setContactForm] = useState({ name: "", email: "", phone: "", title: "", company_id: "" });
+  const [activityForm, setActivityForm] = useState({ entity_type: "opportunity", entity_id: "", kind: "note", note: "" });
   const [message, setMessage] = useState("");
+  const salesTabs = [
+    { id: "pipeline", label: "Pipeline" },
+    { id: "leads", label: "Leads" },
+    { id: "companies", label: "Companies" },
+    { id: "contacts", label: "Contacts" },
+    { id: "activities", label: "Activities" },
+  ];
 
   const load = async () => {
-    const [l, o, c] = await Promise.all([
+    const [l, o, c, ct, a, s] = await Promise.all([
       fetch(`${apiBase}/crm/leads`, { credentials: "include" }),
       fetch(`${apiBase}/crm/opportunities`, { credentials: "include" }),
       fetch(`${apiBase}/crm/companies`, { credentials: "include" }),
+      fetch(`${apiBase}/crm/contacts`, { credentials: "include" }),
+      fetch(`${apiBase}/crm/activities`, { credentials: "include" }),
+      fetch(`${apiBase}/crm/pipeline/summary`, { credentials: "include" }),
     ]);
     if (l.ok) setLeads(await l.json());
     if (o.ok) setOpps(await o.json());
     if (c.ok) setCompanies(await c.json());
+    if (ct.ok) setContacts(await ct.json());
+    if (a.ok) setActivities(await a.json());
+    if (s.ok) setSummary(await s.json());
   };
   useEffect(() => { void load(); }, []);
-  const post = async (url: string, body: unknown, ok: string) => { const r = await fetch(`${apiBase}${url}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); setMessage(r.ok ? ok : ((await r.json()).error?.message ?? "Action failed")); await load(); return r.ok; };
-  const pipelineTotal = opps.filter((o) => o.stage !== "lost").reduce((sum, o) => sum + o.amount, 0);
+  const post = async (url: string, body: unknown, ok: string) => {
+    const r = await fetch(`${apiBase}${url}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const payload = await r.json().catch(() => null) as { error?: { message?: string } | string } | null;
+    const err = payload?.error;
+    setMessage(r.ok ? ok : (typeof err === "string" ? err : err?.message ?? "Action failed"));
+    if (r.ok) await load();
+    return r.ok;
+  };
+  const moveStage = async (id: string, stage: string) => {
+    await post(`/crm/opportunities/${id}/stage`, { stage }, "Stage updated");
+  };
 
   return <section className="content-wrap">
-    <div className="page-heading"><div><p className="eyebrow">Sales & CRM</p><h1>Pipeline & customers.</h1><p className="lede">Leads, opportunities, and the companies you sell to. Open pipeline: {pipelineTotal.toLocaleString()}.</p></div></div>
+    <div className="page-heading"><div><p className="eyebrow">Sales & CRM</p><h1>Pipeline & customers.</h1><p className="lede">Stage board, lead conversion, companies, contacts, and activity — one CRM suite.</p></div></div>
     {message && <p className="inline-message">{message}</p>}
-    <div className="section-heading task-heading"><div><p className="eyebrow">Opportunities</p><h2>{opps.length}</h2></div></div>
-    <form className="task-composer workflow-composer" onSubmit={async (e) => { e.preventDefault(); if (await post("/crm/opportunities", { name: oppForm.name, amount: Number(oppForm.amount || 0), company_id: oppForm.company_id }, "Opportunity created")) setOppForm({ name: "", amount: "", company_id: "" }); }}><input placeholder="Opportunity name" value={oppForm.name} onChange={(e) => setOppForm({ ...oppForm, name: e.target.value })} required /><input placeholder="Amount" inputMode="decimal" value={oppForm.amount} onChange={(e) => setOppForm({ ...oppForm, amount: e.target.value.replace(/[^0-9.]/g, "") })} /><Dropdown value={oppForm.company_id} options={[{ value: "", label: "No company" }, ...companies.map((c) => ({ value: c.id, label: c.name }))]} onChange={(value) => setOppForm({ ...oppForm, company_id: value })} ariaLabel="Company" placeholder="No company" /><button className="primary-button" type="submit">Add</button></form>
-    <div className="record-list">{opps.map((o) => <div className="record-row" key={o.id}><span className="record-avatar"><Target size={15} /></span><span className="record-copy"><strong>{o.name} · {o.currency} {o.amount.toLocaleString()}</strong><small>{o.company_name || "no company"}{o.owner_name ? ` · ${o.owner_name}` : ""}</small></span><div className="select-row"><Dropdown value={o.stage} options={OPP_STAGE_OPTIONS} onChange={(value) => void post("/crm/opportunities", { id: o.id, stage: value }, "Stage updated")} ariaLabel="Stage" /></div></div>)}</div>
+    <nav className="finance-tabs" aria-label="CRM suite">
+      {salesTabs.map((item) => (
+        <button key={item.id} type="button" className={`finance-tab ${tab === item.id ? "active" : ""}`} onClick={() => setTab(item.id)}>{item.label}</button>
+      ))}
+    </nav>
 
-    <div className="section-heading task-heading"><div><p className="eyebrow">Leads</p><h2>{leads.length}</h2></div></div>
-    <form className="task-composer workflow-composer" onSubmit={async (e) => { e.preventDefault(); if (await post("/crm/leads", leadForm, "Lead created")) setLeadForm({ name: "", contact_email: "", source: "website" }); }}><input placeholder="Lead name" value={leadForm.name} onChange={(e) => setLeadForm({ ...leadForm, name: e.target.value })} required /><input placeholder="Email" value={leadForm.contact_email} onChange={(e) => setLeadForm({ ...leadForm, contact_email: e.target.value })} /><Dropdown value={leadForm.source} options={LEAD_SOURCE_OPTIONS} onChange={(value) => setLeadForm({ ...leadForm, source: value })} ariaLabel="Lead source" /><button className="primary-button" type="submit">Add</button></form>
-    <div className="record-list">{leads.map((l) => <div className="record-row" key={l.id}><span className="record-avatar department-avatar">{l.name.slice(0, 1).toUpperCase()}</span><span className="record-copy"><strong>{l.name}</strong><small>{l.contact_email || "no email"} · {l.source}</small></span><div className="select-row"><Dropdown value={l.status} options={LEAD_STATUS_OPTIONS} onChange={(value) => void post("/crm/leads", { id: l.id, status: value }, "Lead updated")} ariaLabel="Lead status" /></div></div>)}</div>
+    {tab === "pipeline" && <>
+      {summary && <div className="metric-grid">
+        <Metric label="Open pipeline" value={`${summary.currency} ${summary.open_value.toLocaleString()}`} change={`${summary.open_count} deals`} detail={`weighted ${summary.currency} ${Math.round(summary.weighted_value).toLocaleString()}`} />
+        <Metric label="Won" value={`${summary.currency} ${summary.won_value.toLocaleString()}`} change={`${summary.won_count} closed`} detail={`${summary.lead_open} open leads`} />
+        <Metric label="Proposal" value={`${summary.currency} ${(summary.stages.find((s) => s.stage === "proposal")?.amount ?? 0).toLocaleString()}`} change={`${summary.stages.find((s) => s.stage === "proposal")?.count ?? 0} in stage`} detail="late pipeline" />
+      </div>}
+      <form className="compact-form" onSubmit={async (e) => {
+        e.preventDefault();
+        if (await post("/crm/opportunities", { name: oppForm.name, amount: Number(oppForm.amount || 0), company_id: oppForm.company_id, close_date: oppForm.close_date, stage: oppForm.stage }, "Opportunity created")) {
+          setOppForm({ name: "", amount: "", company_id: "", close_date: "", stage: "prospect" });
+        }
+      }}>
+        <p className="eyebrow">New opportunity</p>
+        <div className="form-grid">
+          <input placeholder="Opportunity name" value={oppForm.name} onChange={(e) => setOppForm({ ...oppForm, name: e.target.value })} required />
+          <input placeholder="Amount" inputMode="decimal" value={oppForm.amount} onChange={(e) => setOppForm({ ...oppForm, amount: e.target.value.replace(/[^0-9.]/g, "") })} />
+          <Dropdown value={oppForm.company_id} options={[{ value: "", label: "No company" }, ...companies.map((c) => ({ value: c.id, label: c.name }))]} onChange={(value) => setOppForm({ ...oppForm, company_id: value })} ariaLabel="Company" placeholder="No company" />
+          <DatePicker value={oppForm.close_date} onChange={(value) => setOppForm({ ...oppForm, close_date: value })} placeholder="Close date" ariaLabel="Close date" />
+          <Dropdown value={oppForm.stage} options={OPP_STAGE_OPTIONS} onChange={(value) => setOppForm({ ...oppForm, stage: value })} ariaLabel="Stage" />
+          <button className="primary-button" type="submit">Add</button>
+        </div>
+      </form>
+      <div className="crm-pipeline-board" role="list">
+        {OPP_STAGE_OPTIONS.map((stage) => {
+          const column = opps.filter((o) => o.stage === stage.value);
+          const total = column.reduce((sum, o) => sum + o.amount, 0);
+          return (
+            <div className="crm-pipeline-column" key={stage.value} role="listitem">
+              <h3>{stage.label} · {column.length} · {total.toLocaleString()}</h3>
+              {column.map((o) => (
+                <div className="crm-pipeline-deal" key={o.id}>
+                  <strong>{o.name}</strong>
+                  <small>{o.currency} {o.amount.toLocaleString()} · {o.probability}%{o.company_name ? ` · ${o.company_name}` : ""}{o.close_date ? ` · close ${o.close_date}` : ""}</small>
+                  <Dropdown value={o.stage} options={OPP_STAGE_OPTIONS} onChange={(value) => void moveStage(o.id, value)} ariaLabel={`Stage for ${o.name}`} />
+                </div>
+              ))}
+              {column.length === 0 && <p className="crm-pipeline-empty">Empty</p>}
+            </div>
+          );
+        })}
+      </div>
+    </>}
 
-    <div className="section-heading task-heading"><div><p className="eyebrow">Companies</p><h2>{companies.length}</h2></div></div>
-    <form className="task-composer workflow-composer" onSubmit={async (e) => { e.preventDefault(); if (await post("/crm/companies", companyForm, "Company added")) setCompanyForm({ name: "", industry: "" }); }}><input placeholder="Company name" value={companyForm.name} onChange={(e) => setCompanyForm({ ...companyForm, name: e.target.value })} required /><input placeholder="Industry" value={companyForm.industry} onChange={(e) => setCompanyForm({ ...companyForm, industry: e.target.value })} /><button className="primary-button" type="submit">Add</button></form>
-    <div className="record-list">{companies.map((c) => <div className="record-row" key={c.id}><span className="record-avatar department-avatar">{c.name.slice(0, 2).toUpperCase()}</span><span className="record-copy"><strong>{c.name}</strong><small>{c.industry || "—"}{c.website ? ` · ${c.website}` : ""}</small></span></div>)}</div>
+    {tab === "leads" && <>
+      <form className="compact-form" onSubmit={async (e) => {
+        e.preventDefault();
+        if (await post("/crm/leads", leadForm, "Lead created")) setLeadForm({ name: "", contact_email: "", source: "website", company_id: "" });
+      }}>
+        <p className="eyebrow">New lead</p>
+        <div className="form-grid">
+          <input placeholder="Lead name" value={leadForm.name} onChange={(e) => setLeadForm({ ...leadForm, name: e.target.value })} required />
+          <input placeholder="Email" value={leadForm.contact_email} onChange={(e) => setLeadForm({ ...leadForm, contact_email: e.target.value })} />
+          <Dropdown value={leadForm.source} options={LEAD_SOURCE_OPTIONS} onChange={(value) => setLeadForm({ ...leadForm, source: value })} ariaLabel="Lead source" />
+          <Dropdown value={leadForm.company_id} options={[{ value: "", label: "No company" }, ...companies.map((c) => ({ value: c.id, label: c.name }))]} onChange={(value) => setLeadForm({ ...leadForm, company_id: value })} ariaLabel="Company" placeholder="No company" />
+          <button className="primary-button" type="submit">Add</button>
+        </div>
+      </form>
+      <div className="record-list">{leads.map((l) => (
+        <div className="record-row" key={l.id}>
+          <span className="record-avatar department-avatar">{l.name.slice(0, 1).toUpperCase()}</span>
+          <span className="record-copy"><strong>{l.name}</strong><small>{l.contact_email || "no email"} · {l.source}{l.converted_opportunity_id ? " · converted" : ""}</small></span>
+          <div className="select-row"><Dropdown value={l.status} options={LEAD_STATUS_OPTIONS} onChange={(value) => void post("/crm/leads", { id: l.id, status: value }, "Lead updated")} ariaLabel="Lead status" /></div>
+          {(l.status === "new" || l.status === "qualified") && (
+            <span className="record-actions">
+              <button className="text-button" type="button" onClick={() => void post(`/crm/leads/${l.id}/convert`, { company_id: l.company_id, company_name: l.name, amount: 0 }, "Lead converted")}>Convert</button>
+            </span>
+          )}
+        </div>
+      ))}</div>
+    </>}
+
+    {tab === "companies" && <>
+      <form className="compact-form" onSubmit={async (e) => {
+        e.preventDefault();
+        if (await post("/crm/companies", companyForm, "Company added")) setCompanyForm({ name: "", industry: "", website: "" });
+      }}>
+        <p className="eyebrow">Company</p>
+        <div className="form-grid">
+          <input placeholder="Company name" value={companyForm.name} onChange={(e) => setCompanyForm({ ...companyForm, name: e.target.value })} required />
+          <input placeholder="Industry" value={companyForm.industry} onChange={(e) => setCompanyForm({ ...companyForm, industry: e.target.value })} />
+          <input placeholder="Website" value={companyForm.website} onChange={(e) => setCompanyForm({ ...companyForm, website: e.target.value })} />
+          <button className="primary-button" type="submit">Add</button>
+        </div>
+      </form>
+      <div className="record-list">{companies.map((c) => <div className="record-row" key={c.id}><span className="record-avatar department-avatar">{c.name.slice(0, 2).toUpperCase()}</span><span className="record-copy"><strong>{c.name}</strong><small>{c.industry || "—"}{c.website ? ` · ${c.website}` : ""}</small></span></div>)}</div>
+    </>}
+
+    {tab === "contacts" && <>
+      <form className="compact-form" onSubmit={async (e) => {
+        e.preventDefault();
+        if (await post("/crm/contacts", contactForm, "Contact added")) setContactForm({ name: "", email: "", phone: "", title: "", company_id: "" });
+      }}>
+        <p className="eyebrow">Contact</p>
+        <div className="form-grid">
+          <input placeholder="Name" value={contactForm.name} onChange={(e) => setContactForm({ ...contactForm, name: e.target.value })} required />
+          <input placeholder="Email" value={contactForm.email} onChange={(e) => setContactForm({ ...contactForm, email: e.target.value })} />
+          <input placeholder="Phone" value={contactForm.phone} onChange={(e) => setContactForm({ ...contactForm, phone: e.target.value })} />
+          <input placeholder="Title" value={contactForm.title} onChange={(e) => setContactForm({ ...contactForm, title: e.target.value })} />
+          <Dropdown value={contactForm.company_id} options={[{ value: "", label: "No company" }, ...companies.map((c) => ({ value: c.id, label: c.name }))]} onChange={(value) => setContactForm({ ...contactForm, company_id: value })} ariaLabel="Company" placeholder="No company" />
+          <button className="primary-button" type="submit">Add</button>
+        </div>
+      </form>
+      <div className="record-list">{contacts.map((c) => <div className="record-row" key={c.id}><span className="record-avatar department-avatar">{c.name.slice(0, 1).toUpperCase()}</span><span className="record-copy"><strong>{c.name}</strong><small>{c.email || "no email"}{c.title ? ` · ${c.title}` : ""}{c.company_name ? ` · ${c.company_name}` : ""}</small></span></div>)}</div>
+    </>}
+
+    {tab === "activities" && <>
+      <form className="compact-form" onSubmit={async (e) => {
+        e.preventDefault();
+        if (await post("/crm/activities", activityForm, "Activity logged")) setActivityForm({ entity_type: "opportunity", entity_id: "", kind: "note", note: "" });
+      }}>
+        <p className="eyebrow">Log activity</p>
+        <div className="form-grid">
+          <Dropdown value={activityForm.entity_type} options={[{ value: "opportunity", label: "Opportunity" }, { value: "lead", label: "Lead" }, { value: "company", label: "Company" }, { value: "contact", label: "Contact" }]} onChange={(value) => setActivityForm({ ...activityForm, entity_type: value, entity_id: "" })} ariaLabel="Entity type" />
+          <Dropdown
+            value={activityForm.entity_id}
+            options={[
+              { value: "", label: "Select record" },
+              ...(activityForm.entity_type === "opportunity" ? opps.map((o) => ({ value: o.id, label: o.name })) :
+                activityForm.entity_type === "lead" ? leads.map((l) => ({ value: l.id, label: l.name })) :
+                activityForm.entity_type === "company" ? companies.map((c) => ({ value: c.id, label: c.name })) :
+                contacts.map((c) => ({ value: c.id, label: c.name }))),
+            ]}
+            onChange={(value) => setActivityForm({ ...activityForm, entity_id: value })}
+            ariaLabel="Record"
+            placeholder="Select record"
+          />
+          <Dropdown value={activityForm.kind} options={[{ value: "note", label: "Note" }, { value: "call", label: "Call" }, { value: "email", label: "Email" }, { value: "meeting", label: "Meeting" }]} onChange={(value) => setActivityForm({ ...activityForm, kind: value })} ariaLabel="Kind" />
+          <input placeholder="Note" value={activityForm.note} onChange={(e) => setActivityForm({ ...activityForm, note: e.target.value })} required />
+          <button className="primary-button" type="submit">Log</button>
+        </div>
+      </form>
+      <div className="record-list">{activities.map((a) => <div className="record-row" key={a.id}><span className="record-avatar"><Target size={15} /></span><span className="record-copy"><strong>{a.kind} · {a.entity_type}</strong><small>{a.note} · {a.author_name || "system"} · {a.created_at.slice(0, 16)}</small></span></div>)}</div>
+    </>}
   </section>;
 }
 

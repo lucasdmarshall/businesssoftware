@@ -255,8 +255,12 @@ func main() {
 	mux.Handle("POST /api/v1/crm/contacts", authHandler.RequirePermission("sales.manage", http.HandlerFunc(crmHandler.Contacts)))
 	mux.Handle("GET /api/v1/crm/leads", authHandler.RequirePermission("sales.read", http.HandlerFunc(crmHandler.Leads)))
 	mux.Handle("POST /api/v1/crm/leads", authHandler.RequirePermission("sales.manage", http.HandlerFunc(crmHandler.Leads)))
+	mux.Handle("POST /api/v1/crm/leads/{id}/convert", authHandler.RequirePermission("sales.manage", http.HandlerFunc(crmHandler.ConvertLead)))
 	mux.Handle("GET /api/v1/crm/opportunities", authHandler.RequirePermission("sales.read", http.HandlerFunc(crmHandler.Opportunities)))
 	mux.Handle("POST /api/v1/crm/opportunities", authHandler.RequirePermission("sales.manage", http.HandlerFunc(crmHandler.Opportunities)))
+	mux.Handle("POST /api/v1/crm/opportunities/{id}/stage", authHandler.RequirePermission("sales.manage", http.HandlerFunc(crmHandler.MoveStage)))
+	mux.Handle("GET /api/v1/crm/opportunities/{id}/history", authHandler.RequirePermission("sales.read", http.HandlerFunc(crmHandler.StageHistory)))
+	mux.Handle("GET /api/v1/crm/pipeline/summary", authHandler.RequirePermission("sales.read", http.HandlerFunc(crmHandler.PipelineSummary)))
 	mux.Handle("GET /api/v1/crm/activities", authHandler.RequirePermission("sales.read", http.HandlerFunc(crmHandler.Activities)))
 	mux.Handle("POST /api/v1/crm/activities", authHandler.RequirePermission("sales.manage", http.HandlerFunc(crmHandler.Activities)))
 	itopsHandler := itops.Handler{DB: pool, Auth: authHandler}

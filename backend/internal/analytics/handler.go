@@ -136,21 +136,29 @@ func (h Handler) Attendance(w http.ResponseWriter, r *http.Request) {
 	httpapi.WriteJSON(w, http.StatusOK, summary)
 }
 
-// Sales returns a placeholder summary until the CRM module lands. The shape is
-// stable so dashboards and scheduled reports can wire against it now.
+// Sales returns CRM pipeline metrics for the selected period.
 func (h Handler) Sales(w http.ResponseWriter, r *http.Request) {
 	user, err := h.Auth.Authenticate(r)
 	if err != nil || h.DB == nil {
 		httpapi.WriteError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return
 	}
-	_ = user.OrganizationID
 	period, from, to := h.periodFromRequest(r)
-	httpapi.WriteJSON(w, http.StatusOK, SalesSummary{
+	summary := SalesSummary{
 		Period:          period,
 		From:            from,
 		To:              to,
-		ModuleAvailable: false,
-		Message:         "Sales/CRM module is not installed yet. Summary shape is reserved for Phase 7 CRM data.",
-	})
+		ModuleAvailable: true,
+		Message:         "CRM pipeline summary",
+	}
+	_ = h.DB.QueryRow(r.Context(), `
+		SELECT COUNT(*) FROM leads
+		WHERE organization_id=$1 AND created_at::date BETWEEN $2::date AND $3::date`,
+		user.OrganizationID, from, to).Scan(&summary.LeadCount)
+	_ = h.DB.QueryRow(r.Context(), `
+		SELECT COUNT(*), COALESCE(SUM(CASE WHEN stage NOT IN ('won','lost') THEN amount ELSE 0 END),0),
+		       COALESCE(SUM(CASE WHEN stage='won' AND COALESCE(close_date, updated_at::date) BETWEEN $2::date AND $3::date THEN amount ELSE 0 END),0)
+		FROM opportunities WHERE organization_id=$1`,
+		user.OrganizationID, from, to).Scan(&summary.OpportunityCount, &summary.PipelineValue, &summary.WonValue)
+	httpapi.WriteJSON(w, http.StatusOK, summary)
 }
