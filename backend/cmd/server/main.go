@@ -128,10 +128,16 @@ func main() {
 	mux.Handle("GET /api/v1/tasks/{id}/attachments/{attachmentID}", authHandler.RequirePermission("tasks.read", http.HandlerFunc(taskHandler.DownloadAttachment)))
 	attendanceHandler := attendance.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/attendance", authHandler.RequirePermission("attendance.read", http.HandlerFunc(attendanceHandler.List)))
+	mux.Handle("GET /api/v1/attendance/settings", authHandler.RequirePermission("attendance.read", http.HandlerFunc(attendanceHandler.Settings)))
+	mux.Handle("POST /api/v1/attendance/settings", authHandler.RequirePermission("attendance.read", http.HandlerFunc(attendanceHandler.Settings)))
+	mux.Handle("GET /api/v1/attendance/people", authHandler.RequirePermission("attendance.manage", http.HandlerFunc(attendanceHandler.People)))
 	mux.Handle("GET /api/v1/attendance/organization", authHandler.RequirePermission("attendance.manage", http.HandlerFunc(attendanceHandler.ListOrganization)))
+	mux.Handle("GET /api/v1/attendance/today", authHandler.RequirePermission("attendance.manage", http.HandlerFunc(attendanceHandler.Today)))
+	mux.Handle("GET /api/v1/attendance/corrections", authHandler.RequirePermission("attendance.manage", http.HandlerFunc(attendanceHandler.ListCorrections)))
 	mux.Handle("POST /api/v1/attendance/corrections", authHandler.RequirePermission("attendance.manage", http.HandlerFunc(attendanceHandler.Correct)))
-	mux.Handle("POST /api/v1/attendance/check-in", authHandler.RequirePermission("attendance.manage", http.HandlerFunc(attendanceHandler.Mutate)))
-	mux.Handle("POST /api/v1/attendance/check-out", authHandler.RequirePermission("attendance.manage", http.HandlerFunc(attendanceHandler.Mutate)))
+	mux.Handle("POST /api/v1/attendance/status", authHandler.RequirePermission("attendance.read", http.HandlerFunc(attendanceHandler.SetStatus)))
+	mux.Handle("POST /api/v1/attendance/check-in", authHandler.RequirePermission("attendance.read", http.HandlerFunc(attendanceHandler.Mutate)))
+	mux.Handle("POST /api/v1/attendance/check-out", authHandler.RequirePermission("attendance.read", http.HandlerFunc(attendanceHandler.Mutate)))
 	leaveHandler := leave.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/leave", authHandler.RequirePermission("leave.read", http.HandlerFunc(leaveHandler.List)))
 	mux.Handle("POST /api/v1/leave", authHandler.RequirePermission("leave.read", http.HandlerFunc(leaveHandler.Create)))

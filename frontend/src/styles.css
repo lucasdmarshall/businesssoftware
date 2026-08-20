@@ -131,3 +131,21 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   .attendance-today, .connection-strip { flex-direction: column; align-items: flex-start; gap: 14px; }
   .theme-switcher { right: 16px; bottom: 16px; }
 }
+
+.attendance-policy { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-top: 48px; padding: 22px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.attendance-policy strong { display: block; font-size: 28px; letter-spacing: -.04em; margin: 6px 0; }
+.attendance-policy small { color: var(--muted); font-size: 10px; }
+.attendance-policy-edit { display: flex; align-items: center; gap: 12px; min-width: 220px; }
+.attendance-desk { display: grid; grid-template-columns: 1.2fr 1fr .7fr auto; gap: 12px; align-items: end; margin: 18px 0 36px; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
+.attendance-employee-id { display: grid; gap: 6px; }
+.attendance-employee-id strong { font-size: 14px; font-variant-numeric: tabular-nums; }
+.attendance-table-wrap { overflow-x: auto; border-top: 1px solid var(--line); margin-bottom: 28px; }
+.attendance-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.attendance-table th { text-align: left; color: var(--muted); font-weight: 500; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; padding: 12px 10px; border-bottom: 1px solid var(--line); }
+.attendance-table td { padding: 14px 10px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.attendance-table tr.editable { cursor: pointer; }
+.attendance-table tr.editable:hover { background: var(--surface-soft); }
+@media (max-width: 960px) {
+  .attendance-desk { grid-template-columns: 1fr; }
+  .attendance-policy { flex-direction: column; align-items: flex-start; }
+}
