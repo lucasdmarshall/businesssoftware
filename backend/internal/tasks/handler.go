@@ -124,6 +124,47 @@ func (h Handler) Create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, task)
 }
 
+// Delete removes a task and records a tombstone plus a delete sync operation so
+// offline clients drop their local copy on the next pull.
+func (h Handler) Delete(w http.ResponseWriter, r *http.Request) {
+	user, err := h.Auth.Authenticate(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "task id is required"})
+		return
+	}
+	tx, err := h.DB.Begin(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not begin delete"})
+		return
+	}
+	defer tx.Rollback(r.Context())
+	result, err := tx.Exec(r.Context(), `DELETE FROM tasks WHERE id=$1 AND organization_id=$2`, id, user.OrganizationID)
+	if err != nil || result.RowsAffected() == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "task not found"})
+		return
+	}
+	if _, err := tx.Exec(r.Context(), `INSERT INTO tombstones (organization_id, entity, entity_id, deleted_by) VALUES ($1,'task',$2,$3) ON CONFLICT (organization_id, entity, entity_id) DO NOTHING`, user.OrganizationID, id, user.ID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not record deletion"})
+		return
+	}
+	// Emit a delete operation into the change feed so pull propagates it.
+	if _, err := tx.Exec(r.Context(), `INSERT INTO sync_operations (organization_id, user_id, operation_id, entity, action, payload, created_at) VALUES ($1,$2,gen_random_uuid()::text,'task','delete',$3,NOW())`, user.OrganizationID, user.ID, fmt.Sprintf(`{"id":%q}`, id)); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not queue delete"})
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not complete delete"})
+		return
+	}
+	_, _ = h.DB.Exec(r.Context(), `INSERT INTO audit_logs (organization_id, actor_id, action, entity_type, entity_id) VALUES ($1,$2,'task.deleted','task',$3)`, user.OrganizationID, user.ID, id)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
 func (h Handler) Update(w http.ResponseWriter, r *http.Request) {
 	user, err := h.Auth.Authenticate(r)
 	if err != nil {

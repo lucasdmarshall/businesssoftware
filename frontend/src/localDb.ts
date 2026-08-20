@@ -138,6 +138,11 @@ export async function cacheTasks(tasks: LocalTask[]) {
   }
 }
 
+export async function deleteLocalTask(id: string) {
+  const db = await localDb();
+  await db.execute(`DELETE FROM local_tasks WHERE id=$1`, [id]);
+}
+
 export async function getLocalTasks(): Promise<LocalTask[]> {
   const db = await localDb();
   return db.select<LocalTask[]>(`SELECT id, title, description, status, priority, created_at as createdAt, updated_at as updatedAt, assigned_to as assignedTo, due_at as dueAt, recurrence_rule as recurrenceRule, recurrence_next_at as recurrenceNextAt FROM local_tasks ORDER BY updated_at DESC`);
@@ -224,6 +229,14 @@ export async function pullRemoteChanges(apiBase: string) {
   const db = await localDb();
   for (const operation of operations) {
     if (!hasId(operation)) continue;
+    if (operation.action === "delete") {
+      // A tombstone from the change feed: drop the local copy.
+      const deletedId = (operation.payload ?? {}).id;
+      if (operation.entity === "task" && typeof deletedId === "string") {
+        await db.execute(`DELETE FROM local_tasks WHERE id=$1`, [deletedId]);
+      }
+      continue;
+    }
     if (operation.entity === "task") {
       tasks.push(mapRemoteTask(operation));
     } else if (operation.entity === "leave") {

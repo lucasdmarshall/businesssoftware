@@ -89,6 +89,7 @@ func (h Handler) Push(w http.ResponseWriter, r *http.Request) {
 				_ = tx.Rollback(r.Context())
 				if errors.Is(err, ErrConflict) {
 					result.Conflicts = append(result.Conflicts, operation.ID)
+					h.recordConflict(r.Context(), user, operation, "server version already exists")
 				} else {
 					result.Rejected = append(result.Rejected, operation.ID)
 				}
@@ -302,6 +303,115 @@ func (h Handler) Pull(w http.ResponseWriter, r *http.Request) {
 		operations = append(operations, operation)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"operations": operations})
+}
+
+// recordConflict stores a conflict for later human review. It dedupes on
+// operation_id so retries do not create duplicates.
+func (h Handler) recordConflict(ctx context.Context, user auth.SessionUser, operation Operation, reason string) {
+	_, _ = h.DB.Exec(ctx, `INSERT INTO sync_conflicts (organization_id, operation_id, entity, action, client_payload, reason, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (organization_id, operation_id) DO NOTHING`, user.OrganizationID, operation.ID, operation.Entity, operation.Action, operation.Payload, reason, user.ID)
+}
+
+type conflictRecord struct {
+	ID        string          `json:"id"`
+	Entity    string          `json:"entity"`
+	Action    string          `json:"action"`
+	Payload   json.RawMessage `json:"client_payload"`
+	Reason    string          `json:"reason"`
+	Status    string          `json:"status"`
+	CreatedAt string          `json:"created_at"`
+}
+
+// Conflicts lists open sync conflicts for the organization.
+func (h Handler) Conflicts(w http.ResponseWriter, r *http.Request) {
+	user, err := h.Auth.Authenticate(r)
+	if err != nil || h.DB == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		return
+	}
+	rows, err := h.DB.Query(r.Context(), `SELECT id, entity, action, client_payload, reason, status, created_at::text FROM sync_conflicts WHERE organization_id=$1 AND status='open' ORDER BY created_at DESC LIMIT 200`, user.OrganizationID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load conflicts"})
+		return
+	}
+	defer rows.Close()
+	items := make([]conflictRecord, 0)
+	for rows.Next() {
+		var item conflictRecord
+		if err := rows.Scan(&item.ID, &item.Entity, &item.Action, &item.Payload, &item.Reason, &item.Status, &item.CreatedAt); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not read conflicts"})
+			return
+		}
+		items = append(items, item)
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+type resolveConflictRequest struct {
+	ID         string `json:"id"`
+	Resolution string `json:"resolution"` // accept_client | accept_server
+}
+
+// ResolveConflict applies the client version (entity-specific merge) or keeps
+// the server version, then closes the conflict.
+func (h Handler) ResolveConflict(w http.ResponseWriter, r *http.Request) {
+	user, err := h.Auth.Authenticate(r)
+	if err != nil || h.DB == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		return
+	}
+	var input resolveConflictRequest
+	if json.NewDecoder(r.Body).Decode(&input) != nil || input.ID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id is required"})
+		return
+	}
+	if input.Resolution != "accept_client" && input.Resolution != "accept_server" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "resolution must be accept_client or accept_server"})
+		return
+	}
+	var entity string
+	var payload json.RawMessage
+	var status string
+	if err := h.DB.QueryRow(r.Context(), `SELECT entity, client_payload, status FROM sync_conflicts WHERE id=$1 AND organization_id=$2`, input.ID, user.OrganizationID).Scan(&entity, &payload, &status); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "conflict not found"})
+		return
+	}
+	if status != "open" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "conflict is already resolved"})
+		return
+	}
+	newStatus := "resolved_server"
+	if input.Resolution == "accept_client" {
+		newStatus = "resolved_client"
+		if entity == "task" {
+			if err := h.applyClientTask(r.Context(), user, payload); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not apply the client version"})
+				return
+			}
+		}
+	}
+	_, _ = h.DB.Exec(r.Context(), `UPDATE sync_conflicts SET status=$1, resolved_at=NOW() WHERE id=$2 AND organization_id=$3`, newStatus, input.ID, user.OrganizationID)
+	_, _ = h.DB.Exec(r.Context(), `INSERT INTO audit_logs (organization_id, actor_id, action, entity_type, entity_id, metadata) VALUES ($1,$2,'sync.conflict_resolved','sync_conflict',$3,$4)`, user.OrganizationID, user.ID, input.ID, map[string]any{"resolution": input.Resolution})
+	writeJSON(w, http.StatusOK, map[string]string{"status": newStatus})
+}
+
+// applyClientTask overwrites the server task with the client's payload as the
+// entity-specific merge for the "accept mine" resolution.
+func (h Handler) applyClientTask(ctx context.Context, user auth.SessionUser, payload json.RawMessage) error {
+	var p taskPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return err
+	}
+	if p.ID == "" || p.Title == "" {
+		return fmt.Errorf("client task payload is incomplete")
+	}
+	if p.Status == "" {
+		p.Status = "todo"
+	}
+	if p.Priority == "" {
+		p.Priority = "normal"
+	}
+	_, err := h.DB.Exec(ctx, `UPDATE tasks SET title=$1, description=$2, status=$3, priority=$4, due_at=$5, assigned_to=$6, updated_at=NOW() WHERE id=$7 AND organization_id=$8`, p.Title, p.Description, p.Status, p.Priority, p.DueAt, p.AssignedTo, p.ID, user.OrganizationID)
+	return err
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

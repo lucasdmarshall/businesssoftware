@@ -93,6 +93,8 @@ func main() {
 	syncHandler := sync.Handler{DB: pool, Auth: authHandler}
 	mux.HandleFunc("POST /api/v1/sync/push", syncHandler.Push)
 	mux.HandleFunc("GET /api/v1/sync/pull", syncHandler.Pull)
+	mux.HandleFunc("GET /api/v1/sync/conflicts", syncHandler.Conflicts)
+	mux.HandleFunc("POST /api/v1/sync/conflicts/resolve", syncHandler.ResolveConflict)
 	taskHandler := tasks.Handler{DB: pool, Auth: authHandler, StoragePath: cfg.StoragePath, ClamScanPath: cfg.ClamScanPath, RetentionDays: cfg.RetentionDays, BackupVerified: cfg.BackupVerified}
 	if pool != nil {
 		go taskHandler.StartRecurringWorker(context.Background())
@@ -101,6 +103,7 @@ func main() {
 	mux.Handle("GET /api/v1/tasks", authHandler.RequirePermission("tasks.read", http.HandlerFunc(taskHandler.List)))
 	mux.Handle("POST /api/v1/tasks", authHandler.RequirePermission("tasks.manage", http.HandlerFunc(taskHandler.Create)))
 	mux.Handle("PATCH /api/v1/tasks/{id}", authHandler.RequirePermission("tasks.manage", http.HandlerFunc(taskHandler.Update)))
+	mux.Handle("DELETE /api/v1/tasks/{id}", authHandler.RequirePermission("tasks.manage", http.HandlerFunc(taskHandler.Delete)))
 	mux.Handle("GET /api/v1/tasks/{id}/comments", authHandler.RequirePermission("tasks.read", http.HandlerFunc(taskHandler.Comments)))
 	mux.Handle("POST /api/v1/tasks/{id}/comments", authHandler.RequirePermission("tasks.manage", http.HandlerFunc(taskHandler.Comments)))
 	mux.Handle("POST /api/v1/tasks/generate-recurring", authHandler.RequirePermission("tasks.manage", http.HandlerFunc(taskHandler.GenerateRecurring)))
@@ -412,7 +415,7 @@ func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

@@ -90,6 +90,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .notification-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .notification-row { display: grid; gap: 4px; padding: 12px 0; border-bottom: 1px solid var(--line); }.notification-row:last-child { border-bottom: 0; }.notification-row strong { font-size: 12px; font-weight: 600; }.notification-row small { color: var(--muted); font-size: 10px; }.notification-row.unread strong { color: var(--accent); }
 .calendar-allday { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
+.conflict-panel { margin-top: 28px; padding: 16px 18px; border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--warning) 8%, transparent); }.conflict-panel .record-avatar.leave-rejected { background: color-mix(in srgb, var(--warning) 20%, transparent); color: var(--warning); }
 
 /* Tablet: tighten the shell and let the two-column people grid stack. */
 @media (max-width: 1080px) {

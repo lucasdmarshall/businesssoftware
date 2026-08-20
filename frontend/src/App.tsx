@@ -17,7 +17,7 @@ import {
   Sun,
   UsersRound,
 } from "lucide-react";
-import { cacheAttendance, cacheLeave, cacheSession, cacheShifts, cacheTasks, discardOperation, getCachedSession, getLocalAttendance, getLocalLeave, getLocalShifts, getLocalTasks, getOutboxStatuses, initializeLocalDb, pullRemoteChanges, queueOperation, retryOperation, syncPendingOperations, type LocalAttendance, type LocalLeave, type LocalShift, type LocalTask } from "./localDb";
+import { cacheAttendance, cacheLeave, cacheSession, cacheShifts, cacheTasks, deleteLocalTask, discardOperation, getCachedSession, getLocalAttendance, getLocalLeave, getLocalShifts, getLocalTasks, getOutboxStatuses, initializeLocalDb, pullRemoteChanges, queueOperation, retryOperation, syncPendingOperations, type LocalAttendance, type LocalLeave, type LocalShift, type LocalTask } from "./localDb";
 
 type Theme = "light" | "dark";
 type SystemHealth = { status: string; database: string };
@@ -236,6 +236,7 @@ function WorkView() {
   const [saving, setSaving] = useState(false);
   const [commentTaskId, setCommentTaskId] = useState<string | null>(null);
   const [comments, setComments] = useState<Array<{ id: string; author_name: string; body: string }>>([]);
+  const [conflicts, setConflicts] = useState<Array<{ id: string; entity: string; action: string; reason: string; client_payload: Record<string, unknown> }>>([]);
   const [commentBody, setCommentBody] = useState("");
 
   useEffect(() => {
@@ -276,6 +277,27 @@ function WorkView() {
     setOutboxStatuses((current) => { const next = new Map(current); next.delete(taskId); return next; });
   };
 
+  const deleteTask = async (taskId: string) => {
+    if (!window.confirm("Delete this task for everyone?")) return;
+    try {
+      const response = await fetch(`${apiBase}/tasks/${taskId}`, { method: "DELETE", credentials: "include" });
+      if (!response.ok) throw new Error("failed");
+      setTasks((current) => current.filter((task) => task.id !== taskId));
+      await deleteLocalTask(taskId);
+      setMessage("Task deleted");
+    } catch { setMessage("Could not delete task"); }
+  };
+
+  const loadConflicts = async () => {
+    try { const response = await fetch(`${apiBase}/sync/conflicts`, { credentials: "include" }); if (response.ok) setConflicts(await response.json()); } catch { /* offline */ }
+  };
+  useEffect(() => { void loadConflicts(); }, []);
+  const resolveConflict = async (id: string, resolution: "accept_client" | "accept_server") => {
+    const response = await fetch(`${apiBase}/sync/conflicts/resolve`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, resolution }) });
+    setMessage(response.ok ? "Conflict resolved" : "Could not resolve conflict");
+    await loadConflicts();
+  };
+
   const openComments = async (taskId: string) => { setCommentTaskId(taskId); const response = await fetch(`${apiBase}/tasks/${taskId}/comments`, { credentials: "include" }); if (response.ok) setComments(await response.json()); };
   const addComment = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!commentTaskId || !commentBody.trim()) return; const response = await fetch(`${apiBase}/tasks/${commentTaskId}/comments`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body: commentBody }) }); if (response.ok) { const created = await response.json(); setComments((current) => [...current, created]); setCommentBody(""); } };
 
@@ -310,9 +332,13 @@ function WorkView() {
   return <section className="content-wrap">
     <div className="page-heading"><div><p className="eyebrow">Work</p><h1>Keep work moving.</h1><p className="lede">Tasks stay available on this device, even when the company server is offline.</p></div></div>
     {message && <p className="inline-message">{message}</p>}
+    {conflicts.length > 0 && <div className="conflict-panel">
+      <div className="section-heading"><div><p className="eyebrow">Sync conflicts</p><h2>{conflicts.length} to review</h2></div></div>
+      <div className="record-list">{conflicts.map((conflict) => <div className="record-row" key={conflict.id}><span className="record-avatar leave-rejected">!</span><span className="record-copy"><strong>{String(conflict.client_payload.title ?? conflict.entity)}</strong><small>{conflict.entity} · {conflict.reason}</small></span><span className="record-actions"><button className="text-button" type="button" onClick={() => void resolveConflict(conflict.id, "accept_client")}>Keep mine</button><button className="text-button muted" type="button" onClick={() => void resolveConflict(conflict.id, "accept_server")}>Keep server</button></span></div>)}</div>
+    </div>}
     <form className="task-composer" onSubmit={createTask}><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What needs to get done?" required /><select value={priority} onChange={(event) => setPriority(event.target.value)}><option value="low">Low priority</option><option value="normal">Normal priority</option><option value="high">High priority</option><option value="urgent">Urgent</option></select><input type="date" value={dueAt} onChange={(event) => setDueAt(event.target.value)} /><select value={assignedTo} onChange={(event) => setAssignedTo(event.target.value)}><option value="">Assign to me</option>{users.map((user) => <option key={user.id} value={user.id}>{user.display_name}</option>)}</select><select value={recurrenceRule} onChange={(event) => setRecurrenceRule(event.target.value)}><option value="">No repeat</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : "Add task"}</button></form>
     <div className="section-heading task-heading"><div><p className="eyebrow">Queue</p><h2>{tasks.length} tasks</h2></div><select className="scope-select" value={taskScope} onChange={(event) => setTaskScope(event.target.value)}><option value="own">My tasks</option><option value="team">Team tasks</option><option value="department">Department tasks</option><option value="organization">All company tasks</option></select></div>
-    <div className="task-list">{tasks.map((task) => { const syncStatus = outboxStatuses.get(task.id); return <div key={task.id}><div className="task-row"><span className={`task-status ${task.status}`} /><span className="record-copy"><strong>{task.title}</strong><small>{task.priority} priority · {task.dueAt ? `due ${task.dueAt.slice(0, 10)} · ` : ""}{task.assignedTo ? "assigned" : "unassigned"} · {syncStatus === "conflict" ? "server conflict" : syncStatus === "failed" ? "sync failed" : syncStatus === "pending" ? "waiting to sync" : "synced"}</small></span><button className="text-button" type="button" onClick={() => void openComments(task.id)}>Comments</button>{syncStatus === "failed" || syncStatus === "conflict" ? <span className="task-actions"><button className="text-button" type="button" onClick={() => void retryTask(task.id)}>Retry</button>{syncStatus === "conflict" && <button className="text-button muted" type="button" onClick={() => void discardTask(task.id)}>Discard</button>}</span> : <span className={`status-pill priority-${task.priority}`}>{task.status.replace("_", " ")}</span>}</div>{commentTaskId === task.id && <div className="comment-thread">{comments.map((comment) => <p key={comment.id}><strong>{comment.author_name}</strong> {comment.body}</p>)}<form onSubmit={addComment}><input value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder="Write a comment or @mention someone" /><button className="text-button" type="submit">Post</button></form></div>}</div>; })}</div>
+    <div className="task-list">{tasks.map((task) => { const syncStatus = outboxStatuses.get(task.id); return <div key={task.id}><div className="task-row"><span className={`task-status ${task.status}`} /><span className="record-copy"><strong>{task.title}</strong><small>{task.priority} priority · {task.dueAt ? `due ${task.dueAt.slice(0, 10)} · ` : ""}{task.assignedTo ? "assigned" : "unassigned"} · {syncStatus === "conflict" ? "server conflict" : syncStatus === "failed" ? "sync failed" : syncStatus === "pending" ? "waiting to sync" : "synced"}</small></span><button className="text-button" type="button" onClick={() => void openComments(task.id)}>Comments</button>{!syncStatus && <button className="text-button muted" type="button" onClick={() => void deleteTask(task.id)}>Delete</button>}{syncStatus === "failed" || syncStatus === "conflict" ? <span className="task-actions"><button className="text-button" type="button" onClick={() => void retryTask(task.id)}>Retry</button>{syncStatus === "conflict" && <button className="text-button muted" type="button" onClick={() => void discardTask(task.id)}>Discard</button>}</span> : <span className={`status-pill priority-${task.priority}`}>{task.status.replace("_", " ")}</span>}</div>{commentTaskId === task.id && <div className="comment-thread">{comments.map((comment) => <p key={comment.id}><strong>{comment.author_name}</strong> {comment.body}</p>)}<form onSubmit={addComment}><input value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder="Write a comment or @mention someone" /><button className="text-button" type="submit">Post</button></form></div>}</div>; })}</div>
   </section>;
 }
 

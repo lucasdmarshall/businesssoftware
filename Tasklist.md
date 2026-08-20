@@ -177,14 +177,14 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Add pending / synced / failed states
 - [x] Add retry behavior for failed operations
 - [x] Add conflict state and task conflict resolution actions
-- [ ] Add conflict history and entity-specific merge resolution
-- [ ] Add tombstones for deleted records
-- [ ] Define task offline rules
-- [ ] Define calendar offline rules
-- [ ] Define attendance offline rules
-- [ ] Define finance and permission server-authoritative rules
-- [ ] Add offline conflict review UI
-- [ ] Test offline mode without internet access
+- [x] Add conflict history and entity-specific merge resolution (sync_conflicts + keep-mine/keep-server resolve)
+- [x] Add tombstones for deleted records (task delete → tombstone + delete change-feed op → local drop)
+- [x] Define task offline rules (docs/OFFLINE_RULES.md)
+- [x] Define calendar offline rules (docs/OFFLINE_RULES.md)
+- [x] Define attendance offline rules (docs/OFFLINE_RULES.md)
+- [x] Define finance and permission server-authoritative rules (docs/OFFLINE_RULES.md)
+- [x] Add offline conflict review UI (Work screen sync conflicts panel)
+- [-] Test offline mode without internet access (manual test steps documented; automated device-offline harness pending)
 
 ## Phase 7 — Business Modules
 
