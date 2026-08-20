@@ -197,6 +197,14 @@ const ATTENDANCE_STATUS_OPTIONS: DropdownOption[] = [
   { value: "leave", label: "Leave", color: "#aa6c29" },
   { value: "absent", label: "Absent", color: "#b3453b" },
 ];
+const SHIFT_STATUS_OPTIONS: DropdownOption[] = [
+  { value: "scheduled", label: "Scheduled", color: "#3b6ea5" },
+  { value: "confirmed", label: "Confirmed", color: "#2d6a58" },
+  { value: "completed", label: "Completed", color: "#777975" },
+  { value: "cancelled", label: "Cancelled", color: "#b3453b" },
+];
+const SHIFT_FILTER_OPTIONS: DropdownOption[] = [{ value: "all", label: "All statuses" }, ...SHIFT_STATUS_OPTIONS];
+const SHIFT_SCOPE_OPTIONS: DropdownOption[] = [{ value: "mine", label: "My shifts" }, { value: "team", label: "Team schedule" }];
 const RECURRENCE_OPTIONS: DropdownOption[] = [{ value: "", label: "No repeat" }, { value: "daily", label: "Daily" }, { value: "weekly", label: "Weekly" }, { value: "monthly", label: "Monthly" }];
 const TASK_SCOPE_OPTIONS: DropdownOption[] = [{ value: "own", label: "My tasks" }, { value: "team", label: "Team tasks" }, { value: "department", label: "Department tasks" }, { value: "organization", label: "All company tasks" }];
 const DASH_SCOPE_OPTIONS: DropdownOption[] = [{ value: "own", label: "My work" }, { value: "team", label: "My team" }, { value: "department", label: "My department" }, { value: "organization", label: "Whole company" }];
@@ -438,7 +446,7 @@ function App() {
           </div>
         </header>
 
-        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "projects" ? <ProjectsView /> : activeView === "approvals" ? <WorkflowView /> : activeView === "finance" ? <FinanceView /> : activeView === "hr" ? <HRView /> : activeView === "sales" ? <SalesView /> : activeView === "it" ? <ITView /> : activeView === "reports" ? <ReportsView /> : activeView === "calendar" ? <CalendarView /> : activeView === "attendance" ? <AttendanceView canManage={Boolean(currentUser?.permissions?.includes("attendance.manage"))} canCompanySettings={Boolean(currentUser?.permissions?.includes("organization.manage"))} /> : activeView === "leave" ? <LeaveView canManage={Boolean(currentUser?.permissions?.includes("leave.manage"))} currentEmail={currentUser?.email ?? ""} /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : activeView === "settings" ? <SettingsView /> : <section className="content-wrap">
+        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "projects" ? <ProjectsView /> : activeView === "approvals" ? <WorkflowView /> : activeView === "finance" ? <FinanceView /> : activeView === "hr" ? <HRView /> : activeView === "sales" ? <SalesView /> : activeView === "it" ? <ITView /> : activeView === "reports" ? <ReportsView /> : activeView === "calendar" ? <CalendarView /> : activeView === "attendance" ? <AttendanceView canManage={Boolean(currentUser?.permissions?.includes("attendance.manage"))} canCompanySettings={Boolean(currentUser?.permissions?.includes("organization.manage"))} /> : activeView === "leave" ? <LeaveView canManage={Boolean(currentUser?.permissions?.includes("leave.manage"))} currentEmail={currentUser?.email ?? ""} /> : activeView === "schedule" ? <ScheduleView canManage={Boolean(currentUser?.permissions?.includes("shifts.manage"))} /> : activeView === "activity" ? <ActivityView /> : activeView === "settings" ? <SettingsView /> : <section className="content-wrap">
           <div className="page-heading">
             <div>
               <p className="eyebrow">Company home</p>
@@ -552,7 +560,7 @@ function DepartmentWorkspaceShell({ workspace, view, onViewChange, onExit, syste
           : view === "attendance" ? <AttendanceView canManage={manage("attendance") || Boolean(currentUser?.permissions?.includes("attendance.manage"))} canCompanySettings={Boolean(currentUser?.permissions?.includes("organization.manage"))} />
           : view === "leave" ? <LeaveView canManage={manage("leave") || Boolean(currentUser?.permissions?.includes("leave.manage"))} currentEmail={currentUser?.email ?? ""} />
           : view === "calendar" ? <CalendarView />
-          : view === "schedule" ? <ScheduleView />
+          : view === "schedule" ? <ScheduleView canManage={manage("schedule") || Boolean(currentUser?.permissions?.includes("shifts.manage"))} />
           : view === "tasks" ? <WorkView />
           : view === "activity" ? <ActivityView />
           : view === "settings" ? <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">{workspace.name}</p><h1>Settings.</h1><p className="lede">Department settings stay inside this workspace. Company-wide lookup lists remain under Company → Settings.</p></div></div></section>
@@ -1600,14 +1608,195 @@ function LeaveView({ canManage, currentEmail }: { canManage: boolean; currentEma
   </section>;
 }
 
-function ScheduleView() {
-  const [shifts, setShifts] = useState<LocalShift[]>([]);
-  const [form, setForm] = useState({ title: "", shift_date: new Date().toISOString().slice(0, 10), starts_at: "09:00", ends_at: "17:00", note: "" });
+function weekBounds(anchor: string) {
+  const date = new Date(`${anchor}T00:00:00Z`);
+  const day = date.getUTCDay() || 7;
+  const monday = new Date(date);
+  monday.setUTCDate(date.getUTCDate() - (day - 1));
+  const sunday = new Date(monday);
+  sunday.setUTCDate(monday.getUTCDate() + 6);
+  return { from: monday.toISOString().slice(0, 10), to: sunday.toISOString().slice(0, 10) };
+}
+
+function ScheduleView({ canManage }: { canManage: boolean }) {
+  type ShiftRow = LocalShift & { duration?: string; position_name?: string; employee_id?: string };
+  const today = new Date().toISOString().slice(0, 10);
+  const initialWeek = weekBounds(today);
+  const [shifts, setShifts] = useState<ShiftRow[]>([]);
+  const [users, setUsers] = useState<UserRecord[]>([]);
+  const [summary, setSummary] = useState<{ from: string; to: string; scheduled_count: number; confirmed_count: number; completed_count: number; cancelled_count: number; total_hours: string } | null>(null);
+  const [scope, setScope] = useState(canManage ? "team" : "mine");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [weekFrom, setWeekFrom] = useState(initialWeek.from);
+  const [defaultStart, setDefaultStart] = useState("09:00");
+  const [form, setForm] = useState({ title: "", assigned_to: "", shift_date: today, starts_at: "09:00", ends_at: "17:00", note: "" });
   const [message, setMessage] = useState("");
-  const load = async () => { try { await syncPendingOperations(apiBase); const response = await fetch(`${apiBase}/shifts`, { credentials: "include" }); if (!response.ok) throw new Error("offline"); const remote = await response.json() as LocalShift[]; setShifts(remote); await cacheShifts(remote); } catch { try { setShifts(await getLocalShifts()); } catch { setShifts([]); } } };
-  useEffect(() => { void load(); const onOnline = () => void load(); window.addEventListener("online", onOnline); return () => window.removeEventListener("online", onOnline); }, []);
-  const createShift = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const now = new Date().toISOString(); const local: LocalShift = { id: crypto.randomUUID(), assigned_to: "local", ...form, status: "scheduled" }; try { const response = await fetch(`${apiBase}/shifts`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) }); if (!response.ok) throw new Error("offline"); const saved = await response.json() as LocalShift; setShifts((current) => [...current, saved]); await cacheShifts([saved]); setMessage("Shift scheduled"); } catch { await queueOperation({ id: `shift:${local.id}`, entity: "shift", action: "create", payload: local, createdAt: now }); await cacheShifts([local]); setShifts((current) => [...current, local]); setMessage("Saved offline · will sync when the server is reachable"); } setForm((current) => ({ ...current, title: "", note: "" })); };
-  return <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">Schedule</p><h1>Make time visible.</h1><p className="lede">Shifts stay available on this device and sync back to the company schedule.</p></div></div>{message && <p className="inline-message">{message}</p>}<form className="leave-form" onSubmit={createShift}><p className="eyebrow">New shift</p><div className="form-grid"><input placeholder="Shift title" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required /><DatePicker value={form.shift_date} onChange={(value) => setForm({ ...form, shift_date: value })} ariaLabel="Shift date" /><TimePicker value={form.starts_at} onChange={(value) => setForm({ ...form, starts_at: value })} ariaLabel="Start time" /></div><div className="form-grid"><TimePicker value={form.ends_at} onChange={(value) => setForm({ ...form, ends_at: value })} ariaLabel="End time" /><input placeholder="Note (optional)" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /><button className="primary-button" type="submit">Schedule shift</button></div></form><div className="section-heading task-heading"><div><p className="eyebrow">Upcoming</p><h2>{shifts.length} shifts</h2></div></div><div className="record-list">{shifts.map((shift) => <div className="record-row" key={shift.id}><span className="record-avatar"><CalendarDays size={15} /></span><span className="record-copy"><strong>{shift.title}</strong><small>{shift.shift_date} · {shift.starts_at.slice(0, 5)} → {shift.ends_at.slice(0, 5)}</small></span><span className="status-pill">{shift.status}</span></div>)}</div></section>;
+
+  const week = weekBounds(weekFrom);
+  const load = async () => {
+    try {
+      await syncPendingOperations(apiBase);
+      const params = new URLSearchParams({ from: week.from, to: week.to, scope: canManage ? scope : "mine" });
+      if (statusFilter !== "all") params.set("status", statusFilter);
+      const [shiftRes, weekRes, settingsRes] = await Promise.all([
+        fetch(`${apiBase}/shifts?${params}`, { credentials: "include" }),
+        fetch(`${apiBase}/shifts/week?from=${week.from}&to=${week.to}`, { credentials: "include" }),
+        fetch(`${apiBase}/attendance/settings`, { credentials: "include" }),
+      ]);
+      if (!shiftRes.ok) throw new Error("offline");
+      const remote = await shiftRes.json() as ShiftRow[];
+      setShifts(remote);
+      await cacheShifts(remote);
+      if (weekRes.ok) setSummary(await weekRes.json());
+      if (settingsRes.ok) {
+        const policy = await settingsRes.json() as { expected_check_in_time?: string };
+        const start = (policy.expected_check_in_time || "09:00").slice(0, 5);
+        setDefaultStart(start);
+        setForm((current) => current.starts_at === "09:00" ? { ...current, starts_at: start } : current);
+      }
+      if (canManage) {
+        const usersRes = await fetch(`${apiBase}/users`, { credentials: "include" });
+        if (usersRes.ok) setUsers(await usersRes.json());
+      }
+    } catch {
+      try { setShifts(await getLocalShifts()); } catch { setShifts([]); }
+    }
+  };
+
+  useEffect(() => { void load(); const onOnline = () => void load(); window.addEventListener("online", onOnline); return () => window.removeEventListener("online", onOnline); }, [canManage, scope, statusFilter, weekFrom]);
+
+  const createShift = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const now = new Date().toISOString();
+    const payload = { ...form, assigned_to: form.assigned_to || undefined };
+    const local: LocalShift = { id: crypto.randomUUID(), assigned_to: form.assigned_to || "local", title: form.title, shift_date: form.shift_date, starts_at: form.starts_at, ends_at: form.ends_at, status: "scheduled", note: form.note };
+    try {
+      const response = await fetch(`${apiBase}/shifts`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { error?: { message?: string } | string } | null;
+        const err = body?.error;
+        setMessage(typeof err === "string" ? err : err?.message ?? "Could not schedule shift");
+        return;
+      }
+      const saved = await response.json() as ShiftRow;
+      setShifts((current) => [...current, saved].sort((a, b) => `${a.shift_date}${a.starts_at}`.localeCompare(`${b.shift_date}${b.starts_at}`)));
+      await cacheShifts([saved]);
+      setMessage("Shift scheduled");
+      setForm((current) => ({ ...current, title: "", note: "", starts_at: defaultStart }));
+      void load();
+    } catch {
+      await queueOperation({ id: `shift:${local.id}`, entity: "shift", action: "create", payload: local, createdAt: now });
+      await cacheShifts([local]);
+      setShifts((current) => [...current, local]);
+      setMessage("Saved offline · will sync when the server is reachable");
+    }
+  };
+
+  const setStatus = async (id: string, status: string) => {
+    const response = await fetch(`${apiBase}/shifts/status`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+      setMessage(body?.error?.message ?? "Could not update status");
+      return;
+    }
+    setMessage(`Marked ${status}`);
+    void load();
+  };
+
+  const shiftClock = (value: string) => (value || "").slice(0, 5);
+
+  return (
+    <section className="content-wrap">
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">Schedule</p>
+          <h1>Who works when.</h1>
+          <p className="lede">Week view with overlap and leave checks. Assign people when you have schedule manage access. Default start follows company check-in time.</p>
+        </div>
+      </div>
+      {message && <p className="inline-message">{message}</p>}
+
+      <div className="schedule-toolbar">
+        <DatePicker value={weekFrom} onChange={(value) => setWeekFrom(weekBounds(value).from)} ariaLabel="Week of" />
+        <span className="schedule-week-label">{week.from} → {week.to}</span>
+        {canManage && <Dropdown value={scope} options={SHIFT_SCOPE_OPTIONS} onChange={setScope} ariaLabel="Scope" />}
+        <Dropdown value={statusFilter} options={SHIFT_FILTER_OPTIONS} onChange={setStatusFilter} ariaLabel="Status filter" />
+      </div>
+
+      {summary && (
+        <div className="metric-grid">
+          <Metric label="Scheduled" value={String(summary.scheduled_count)} change={`${summary.confirmed_count} confirmed`} detail="this week" />
+          <Metric label="Completed" value={String(summary.completed_count)} change={`${summary.cancelled_count} cancelled`} detail="this week" />
+          <Metric label="Hours booked" value={summary.total_hours.slice(0, 5)} change="excludes cancelled" detail={`${week.from}–${week.to}`} />
+        </div>
+      )}
+
+      <form className="leave-form" onSubmit={(event) => void createShift(event)}>
+        <p className="eyebrow">New shift</p>
+        <div className="form-grid">
+          <input placeholder="Shift title" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required />
+          {canManage ? (
+            <Dropdown
+              value={form.assigned_to}
+              options={[{ value: "", label: "Assign to me" }, ...users.map((user) => ({ value: user.id, label: user.display_name }))]}
+              onChange={(value) => setForm({ ...form, assigned_to: value })}
+              ariaLabel="Assignee"
+              placeholder="Assignee"
+            />
+          ) : <span className="lede" style={{ alignSelf: "center" }}>Assigned to you</span>}
+          <DatePicker value={form.shift_date} onChange={(value) => setForm({ ...form, shift_date: value })} ariaLabel="Shift date" />
+        </div>
+        <div className="form-grid">
+          <TimePicker value={form.starts_at} onChange={(value) => setForm({ ...form, starts_at: value })} ariaLabel="Start time" />
+          <TimePicker value={form.ends_at} onChange={(value) => setForm({ ...form, ends_at: value })} ariaLabel="End time" />
+          <input placeholder="Note (optional)" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} />
+          <button className="primary-button" type="submit">Schedule shift</button>
+        </div>
+      </form>
+
+      <div className="section-heading task-heading"><div><p className="eyebrow">This week</p><h2>{shifts.length} shifts</h2></div></div>
+      <div className="attendance-table-wrap">
+        <table className="attendance-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Title</th>
+              <th>Date</th>
+              <th>Start</th>
+              <th>End</th>
+              <th>Duration</th>
+              <th>Status</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {shifts.length === 0 && <tr><td colSpan={8}>No shifts in this week.</td></tr>}
+            {shifts.map((shift) => (
+              <tr key={shift.id}>
+                <td>{shift.display_name || "You"}</td>
+                <td>{shift.title}</td>
+                <td>{shift.shift_date}</td>
+                <td>{shiftClock(shift.starts_at)}</td>
+                <td>{shiftClock(shift.ends_at)}</td>
+                <td>{(shift.duration || "").slice(0, 8) || "—"}</td>
+                <td><span className="status-pill">{shift.status}</span></td>
+                <td>
+                  <span className="task-actions">
+                    {shift.status === "scheduled" && <button className="text-button" type="button" onClick={() => void setStatus(shift.id, "confirmed")}>Confirm</button>}
+                    {(shift.status === "scheduled" || shift.status === "confirmed") && <button className="text-button" type="button" onClick={() => void setStatus(shift.id, "completed")}>Complete</button>}
+                    {shift.status !== "cancelled" && shift.status !== "completed" && <button className="text-button muted" type="button" onClick={() => void setStatus(shift.id, "cancelled")}>Cancel</button>}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
 }
 
 function ActivityView() {
