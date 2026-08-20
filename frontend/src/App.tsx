@@ -14,9 +14,11 @@ import {
   CalendarDays,
   FolderKanban,
   IdCard,
+  KeyRound,
   LayoutDashboard,
   LifeBuoy,
   LineChart,
+  LogOut,
   Moon,
   PanelLeft,
   Plus,
@@ -28,15 +30,15 @@ import {
   UsersRound,
   Wallet,
 } from "lucide-react";
-import { cacheAttendance, cacheLeave, cacheSession, cacheShifts, cacheTasks, deleteLocalTask, discardOperation, getCachedSession, getLocalAttendance, getLocalLeave, getLocalShifts, getLocalTasks, getOutboxStatuses, initializeLocalDb, pullRemoteChanges, queueOperation, retryOperation, syncPendingOperations, type LocalAttendance, type LocalLeave, type LocalShift, type LocalTask } from "./localDb";
+import { cacheAttendance, cacheLeave, cacheSession, cacheShifts, cacheTasks, clearSession, deleteLocalTask, discardOperation, getCachedSession, getLocalAttendance, getLocalLeave, getLocalShifts, getLocalTasks, getOutboxStatuses, initializeLocalDb, pullRemoteChanges, queueOperation, retryOperation, syncPendingOperations, type LocalAttendance, type LocalLeave, type LocalShift, type LocalTask } from "./localDb";
 
 type Theme = "light" | "dark";
 type SystemHealth = { status: string; database: string };
 type Organization = { id: string; name: string; slug: string };
 type AuthState = "loading" | "setup" | "login" | "authenticated";
-type CurrentUser = { name: string; email: string; organization: string; role: string; permissions?: string[] };
-type UserRecord = { id: string; email: string; display_name: string; status: string };
-type DepartmentRecord = { id: string; name: string; slug: string };
+type CurrentUser = { id?: string; name: string; email: string; username?: string; organization: string; role: string; permissions?: string[]; home_department_id?: string };
+type UserRecord = { id: string; email: string; username?: string; display_name: string; status: string };
+type DepartmentRecord = { id: string; name: string; slug: string; is_core?: boolean };
 type LeaveRequest = { id: string; requested_by: string; display_name?: string; leave_type: string; start_date: string; end_date: string; total_days?: number; half_day?: boolean; reason: string; status: string; workflow_instance_id?: string };
 type LeaveBalance = { id: string; user_id: string; display_name?: string; leave_type: string; year: number; entitled_days: number; used_days: number; carried_over_days: number; pending_days: number; remaining_days: number };
 type LeavePolicy = { id: string; leave_type: string; entitled_days: number; allow_half_day: boolean; requires_balance: boolean; active: boolean };
@@ -58,7 +60,7 @@ type LookupOption = { id: string; category: string; value: string; label: string
 type LookupCatalogItem = { category: string; title: string; permission: string; editable: boolean };
 type DropdownOption = { value: string; label: string; color?: string };
 type ModuleGrant = { code: string; can_view: boolean; can_manage: boolean };
-type DepartmentWorkspace = { id: string; name: string; slug: string; is_head: boolean; company_wide: boolean; modules: ModuleGrant[] };
+type DepartmentWorkspace = { id: string; name: string; slug: string; is_head: boolean; is_primary?: boolean; company_wide: boolean; modules: ModuleGrant[] };
 
 const workflowStatusClass: Record<string, string> = { in_review: "leave-pending", approved: "leave-approved", rejected: "leave-rejected", cancelled: "leave-rejected", draft: "" };
 
@@ -289,7 +291,24 @@ function App() {
 
   const loadWorkspaces = async () => {
     const response = await fetch(`${apiBase}/workspaces/departments`, { credentials: "include" });
-    if (response.ok) setWorkspaces(await response.json());
+    if (response.ok) return await response.json() as DepartmentWorkspace[];
+    return [] as DepartmentWorkspace[];
+  };
+
+  const enterWorkspace = async (id: string) => {
+    const response = await fetch(`${apiBase}/workspaces/departments/${id}`, { credentials: "include" });
+    if (!response.ok) return false;
+    const ws = await response.json() as DepartmentWorkspace;
+    setActiveWorkspace(ws);
+    setDeptView("overview");
+    return true;
+  };
+
+  const openHomeWorkspace = async (user: CurrentUser, list?: DepartmentWorkspace[]) => {
+    const workspacesList = list ?? await loadWorkspaces();
+    setWorkspaces(workspacesList);
+    const homeID = user.home_department_id || workspacesList.find((ws) => ws.is_primary)?.id || (workspacesList.length === 1 ? workspacesList[0].id : "");
+    if (homeID) await enterWorkspace(homeID);
   };
 
   useEffect(() => {
@@ -312,7 +331,8 @@ function App() {
 
         const meResponse = await fetch(`${apiBase}/auth/me`, { credentials: "include" });
         if (meResponse.ok) {
-          setCurrentUser(await meResponse.json());
+          const user = await meResponse.json() as CurrentUser;
+          setCurrentUser(user);
           setAuthState("authenticated");
           try {
             await syncPendingOperations(apiBase);
@@ -320,7 +340,7 @@ function App() {
           } catch {
             // Running outside Tauri (no local SQLite) or a transient error.
           }
-          try { await loadWorkspaces(); } catch { /* workspace API may need migration */ }
+          try { await openHomeWorkspace(user); } catch { /* workspace API may need migration */ }
         } else {
           setAuthState("login");
         }
@@ -357,21 +377,26 @@ function App() {
     } catch {
       // Keep online auth working when running the frontend outside Tauri or offline.
     }
-    try { await loadWorkspaces(); } catch { /* ignore */ }
+    try { await openHomeWorkspace(user); } catch { /* ignore */ }
   };
 
-  const enterWorkspace = async (id: string) => {
-    const response = await fetch(`${apiBase}/workspaces/departments/${id}`, { credentials: "include" });
-    if (!response.ok) return;
-    const ws = await response.json() as DepartmentWorkspace;
-    setActiveWorkspace(ws);
-    setDeptView("overview");
+  const handleLogout = async () => {
+    try {
+      await fetch(`${apiBase}/auth/logout`, { method: "POST", credentials: "include" });
+    } catch {
+      // still clear local state
+    }
+    try { await clearSession(); } catch { /* ignore */ }
+    setCurrentUser(null);
+    setActiveWorkspace(null);
+    setWorkspaces([]);
+    setAuthState("login");
   };
 
   const exitWorkspace = () => {
     setActiveWorkspace(null);
     setDeptView("overview");
-    void loadWorkspaces();
+    void loadWorkspaces().then(setWorkspaces);
   };
 
   if (authState === "loading") return <LoadingScreen />;
@@ -387,6 +412,7 @@ function App() {
           view={deptView}
           onViewChange={setDeptView}
           onExit={exitWorkspace}
+          onLogout={() => void handleLogout()}
           systemHealth={systemHealth}
           currentUser={currentUser}
         />
@@ -424,13 +450,13 @@ function App() {
         </nav>
 
         <div className="sidebar-footer">
-          <button className="nav-item" type="button">
-            <CircleHelp size={17} strokeWidth={1.8} />
-            <span>Help center</span>
+          <button className="nav-item" type="button" onClick={() => void handleLogout()}>
+            <LogOut size={17} strokeWidth={1.8} />
+            <span>Log out</span>
           </button>
           <div className="profile-row">
             <span className="profile-avatar">{(currentUser?.name ?? "U").slice(0, 1)}</span>
-            <span className="profile-copy"><strong>{currentUser?.name ?? "User"}</strong><small>{currentUser?.role ?? ""}</small></span>
+            <span className="profile-copy"><strong>{currentUser?.name ?? "User"}</strong><small>{currentUser?.username ? `@${currentUser.username}` : currentUser?.role ?? ""}</small></span>
             <PanelLeft size={15} />
           </div>
         </div>
@@ -442,6 +468,7 @@ function App() {
           <div className="topbar-actions">
             <button className="search-button" type="button"><Search size={16} aria-hidden="true" /> Search <kbd>⌘ K</kbd></button>
             <NotificationBell />
+            <button className="text-button" type="button" onClick={() => void handleLogout()} aria-label="Log out">Log out</button>
             <span className={`status-dot ${systemHealth.status !== "ok" ? "offline" : ""}`} role="status" aria-label={`Backend ${systemHealth.status}, database ${systemHealth.database}`} title={`Backend: ${systemHealth.status} · Database: ${systemHealth.database}`} />
           </div>
         </header>
@@ -489,6 +516,7 @@ function App() {
 const departmentNav: Array<{ code: string; label: string; icon: typeof LayoutDashboard }> = [
   { code: "overview", label: "Overview", icon: LayoutDashboard },
   { code: "users", label: "User Management", icon: UsersRound },
+  { code: "credentials", label: "Credentials", icon: KeyRound },
   { code: "access", label: "Access Control", icon: SlidersHorizontal },
   { code: "attendance", label: "Attendance", icon: Clock3 },
   { code: "calendar", label: "Calendar", icon: CalendarDays },
@@ -502,11 +530,12 @@ const departmentNav: Array<{ code: string; label: string; icon: typeof LayoutDas
   { code: "settings", label: "Settings", icon: SlidersHorizontal },
 ];
 
-function DepartmentWorkspaceShell({ workspace, view, onViewChange, onExit, systemHealth, currentUser }: {
+function DepartmentWorkspaceShell({ workspace, view, onViewChange, onExit, onLogout, systemHealth, currentUser }: {
   workspace: DepartmentWorkspace;
   view: string;
   onViewChange: (view: string) => void;
   onExit: () => void;
+  onLogout: () => void;
   systemHealth: SystemHealth;
   currentUser: CurrentUser | null;
 }) {
@@ -538,6 +567,10 @@ function DepartmentWorkspaceShell({ workspace, view, onViewChange, onExit, syste
             <PanelLeft size={17} strokeWidth={1.8} />
             <span>All departments</span>
           </button>
+          <button className="nav-item" type="button" onClick={onLogout}>
+            <LogOut size={17} strokeWidth={1.8} />
+            <span>Log out</span>
+          </button>
           <div className="profile-row">
             <span className="profile-avatar">{(currentUser?.name ?? "U").slice(0, 1)}</span>
             <span className="profile-copy"><strong>{currentUser?.name ?? "User"}</strong><small>{workspace.is_head ? "Dept head" : workspace.company_wide ? "Company access" : "Member"}</small></span>
@@ -549,10 +582,12 @@ function DepartmentWorkspaceShell({ workspace, view, onViewChange, onExit, syste
           <div className="breadcrumb">{workspace.name} <span>/</span> {view}</div>
           <div className="topbar-actions">
             <NotificationBell />
+            <button className="text-button" type="button" onClick={onLogout} aria-label="Log out">Log out</button>
             <span className={`status-dot ${systemHealth.status !== "ok" ? "offline" : ""}`} role="status" aria-label={`Backend ${systemHealth.status}`} />
           </div>
         </header>
-        {view === "users" ? <DeptUsersView departmentId={workspace.id} canManage={manage("users")} />
+        {view === "users" ? <DeptUsersView departmentId={workspace.id} canManage={manage("users")} canCredentials={manage("credentials")} />
+          : view === "credentials" ? <DeptCredentialsView departmentId={workspace.id} canManage={manage("credentials")} />
           : view === "access" ? <DeptAccessView departmentId={workspace.id} canManage={manage("access")} />
           : view === "salary" ? <DeptSalaryView departmentId={workspace.id} canManage={manage("salary")} />
           : view === "bonus" ? <DeptBonusView departmentId={workspace.id} canManage={manage("bonus")} />
@@ -589,17 +624,16 @@ function DeptOverviewView({ workspace }: { workspace: DepartmentWorkspace }) {
   );
 }
 
-function DeptUsersView({ departmentId, canManage }: { departmentId: string; canManage: boolean }) {
+function DeptUsersView({ departmentId, canManage, canCredentials }: { departmentId: string; canManage: boolean; canCredentials?: boolean }) {
   const [members, setMembers] = useState<Array<{ user_id: string; display_name: string; email: string; phone: string; employee_id: string; is_head: boolean; status: string }>>([]);
-  useEffect(() => {
-    void fetch(`${apiBase}/workspaces/departments/${departmentId}/members`, { credentials: "include" })
-      .then((response) => response.ok ? response.json() : [])
-      .then(setMembers)
-      .catch(() => setMembers([]));
-  }, [departmentId]);
+  const load = async () => {
+    const response = await fetch(`${apiBase}/workspaces/departments/${departmentId}/members`, { credentials: "include" });
+    if (response.ok) setMembers(await response.json());
+  };
+  useEffect(() => { void load(); }, [departmentId]);
   return (
     <section className="content-wrap">
-      <div className="page-heading"><div><p className="eyebrow">User Management</p><h1>People in this department.</h1><p className="lede">Phone, employee code, and membership — scoped to this department only.{canManage ? "" : " Read-only."}</p></div></div>
+      <div className="page-heading"><div><p className="eyebrow">User Management</p><h1>People in this department.</h1><p className="lede">Phone, employee code, and membership — scoped to this department only.{canManage ? "" : " Read-only."}{canCredentials ? " Use Credentials to issue login accounts." : ""}</p></div></div>
       <div className="record-list">
         {members.map((member) => (
           <div className="record-row" key={member.user_id}>
@@ -612,6 +646,69 @@ function DeptUsersView({ departmentId, canManage }: { departmentId: string; canM
           </div>
         ))}
       </div>
+    </section>
+  );
+}
+
+function DeptCredentialsView({ departmentId, canManage }: { departmentId: string; canManage: boolean }) {
+  const [departments, setDepartments] = useState<DepartmentRecord[]>([]);
+  const [form, setForm] = useState({ display_name: "", department_id: departmentId, email: "", is_head: false });
+  const [issued, setIssued] = useState<{ username: string; password: string; employee_id: string; display_name: string } | null>(null);
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    void fetch(`${apiBase}/departments`, { credentials: "include" })
+      .then((response) => (response.ok ? response.json() : []))
+      .then((rows: DepartmentRecord[]) => {
+        setDepartments(rows);
+        setForm((current) => ({ ...current, department_id: current.department_id || departmentId || rows[0]?.id || "" }));
+      });
+  }, [departmentId]);
+  const generate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canManage) return;
+    setMessage("");
+    const response = await fetch(`${apiBase}/workspaces/departments/${departmentId}/credentials`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(form),
+    });
+    const payload = await response.json().catch(() => null) as { username?: string; password?: string; employee_id?: string; display_name?: string; error?: string | { message?: string } } | null;
+    if (!response.ok) {
+      const err = payload?.error;
+      setMessage(typeof err === "string" ? err : err?.message ?? "Could not generate credentials");
+      return;
+    }
+    setIssued({ username: payload?.username ?? "", password: payload?.password ?? "", employee_id: payload?.employee_id ?? "", display_name: payload?.display_name ?? form.display_name });
+    setForm({ display_name: "", department_id: form.department_id, email: "", is_head: false });
+    setMessage("Credentials generated — copy and share once. Password is not shown again.");
+  };
+  return (
+    <section className="content-wrap">
+      <div className="page-heading"><div><p className="eyebrow">Credentials</p><h1>Issue employee logins.</h1><p className="lede">Company creates username, temporary password, and employee ID. The employee signs in and lands in their department workspace. Admin can grant this module to IT, HR, or any department via Access Control.</p></div></div>
+      {message && <p className="inline-message">{message}</p>}
+      {!canManage && <p className="lede">You can view this module but cannot issue credentials.</p>}
+      {canManage && (
+        <form className="compact-form" onSubmit={(event) => void generate(event)}>
+          <p className="eyebrow">Generate account</p>
+          <div className="form-grid">
+            <input placeholder="Full name" value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} required />
+            <Dropdown value={form.department_id} options={[{ value: "", label: "Department" }, ...departments.map((d) => ({ value: d.id, label: d.name }))]} onChange={(value) => setForm({ ...form, department_id: value })} ariaLabel="Department" placeholder="Department" />
+            <input placeholder="Email (optional)" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+            <label className="checkbox-inline"><input type="checkbox" checked={form.is_head} onChange={(e) => setForm({ ...form, is_head: e.target.checked })} /> Department head</label>
+            <button className="primary-button" type="submit">Generate</button>
+          </div>
+        </form>
+      )}
+      {issued && (
+        <div className="record-list" style={{ marginTop: 24 }}>
+          <div className="record-row">
+            <span className="record-avatar department-avatar"><KeyRound size={15} /></span>
+            <span className="record-copy">
+              <strong>{issued.display_name}</strong>
+              <small>username <code>{issued.username}</code> · password <code>{issued.password}</code> · employee ID <code>{issued.employee_id}</code></small>
+            </span>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -3195,6 +3292,8 @@ function PeopleView() {
   const [showUserForm, setShowUserForm] = useState(false);
   const [userForm, setUserForm] = useState({ display_name: "", email: "", password: "" });
   const [departmentForm, setDepartmentForm] = useState({ name: "", slug: "" });
+  const [credForm, setCredForm] = useState({ display_name: "", department_id: "", email: "", is_head: false });
+  const [issued, setIssued] = useState<{ username: string; password: string; employee_id: string; display_name: string } | null>(null);
   const [message, setMessage] = useState("");
 
   const load = async () => {
@@ -3206,7 +3305,11 @@ function PeopleView() {
       fetch(`${apiBase}/user-departments`, { credentials: "include" }),
     ]);
     if (usersResponse.ok) setUsers(await usersResponse.json());
-    if (departmentsResponse.ok) setDepartments(await departmentsResponse.json());
+    if (departmentsResponse.ok) {
+      const depts = await departmentsResponse.json() as DepartmentRecord[];
+      setDepartments(depts);
+      setCredForm((current) => ({ ...current, department_id: current.department_id || depts[0]?.id || "" }));
+    }
     if (rolesResponse.ok) setRoles(await rolesResponse.json());
     if (permissionsResponse.ok) setPermissions(await permissionsResponse.json());
     if (membershipsResponse.ok) setMemberships(await membershipsResponse.json());
@@ -3232,6 +3335,42 @@ function PeopleView() {
     if (!response.ok) { setMessage((await response.json()).error ?? "Could not create department"); return; }
     setDepartmentForm({ name: "", slug: "" });
     setMessage("Department added");
+    await load();
+  };
+
+  const renameDepartment = async (department: DepartmentRecord) => {
+    const name = window.prompt(`Rename department`, department.name);
+    if (!name || name.trim() === department.name) return;
+    const response = await fetch(`${apiBase}/departments/${department.id}`, {
+      method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name.trim() }),
+    });
+    setMessage(response.ok ? "Department renamed" : ((await response.json()).error ?? "Could not rename"));
+    if (response.ok) await load();
+  };
+
+  const archiveDepartment = async (department: DepartmentRecord) => {
+    if (!window.confirm(`Remove ${department.name} from the active catalog? Existing memberships stay, but the workspace is hidden.`)) return;
+    const response = await fetch(`${apiBase}/departments/${department.id}`, { method: "DELETE", credentials: "include" });
+    setMessage(response.ok ? "Department removed" : ((await response.json()).error ?? "Could not remove"));
+    if (response.ok) await load();
+  };
+
+  const generateCredentials = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setMessage("");
+    const response = await fetch(`${apiBase}/credentials/generate`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(credForm),
+    });
+    const payload = await response.json().catch(() => null) as { username?: string; password?: string; employee_id?: string; display_name?: string; error?: string } | null;
+    if (!response.ok) {
+      setMessage(payload?.error ?? "Could not generate credentials");
+      return;
+    }
+    setIssued({ username: payload?.username ?? "", password: payload?.password ?? "", employee_id: payload?.employee_id ?? "", display_name: payload?.display_name ?? credForm.display_name });
+    setCredForm({ display_name: "", department_id: credForm.department_id, email: "", is_head: false });
+    setMessage("Credentials generated — share once with the employee");
     await load();
   };
 
@@ -3268,15 +3407,29 @@ function PeopleView() {
   };
 
   return <section className="content-wrap">
-    <div className="page-heading"><div><p className="eyebrow">Organization</p><h1>People & teams.</h1><p className="lede">Manage people, departments, and who belongs in each department workspace.</p></div><button className="primary-button" type="button" onClick={() => setShowUserForm((value) => !value)}>{showUserForm ? "Close form" : "Add person"}</button></div>
+    <div className="page-heading"><div><p className="eyebrow">Organization</p><h1>People & departments.</h1><p className="lede">Core departments ship by default. CEO/admin can rename, remove, or add departments. Issue username + password + employee ID from Credentials.</p></div><button className="primary-button" type="button" onClick={() => setShowUserForm((value) => !value)}>{showUserForm ? "Close form" : "Add person"}</button></div>
     {message && <p className="inline-message">{message}</p>}
     <div className="people-grid">
-      <div className="people-section"><div className="section-heading"><div><p className="eyebrow">Directory</p><h2>{users.length} people</h2></div></div><div className="record-list">{users.map((user) => <div className="record-row" key={user.id}><span className="record-avatar">{user.display_name.slice(0, 1).toUpperCase()}</span><span className="record-copy"><strong>{user.display_name}</strong><small>{user.email}</small></span><span className={`status-pill ${user.status === "offboarded" ? "leave-rejected" : ""}`}>{user.status}</span>{user.status !== "offboarded" && <span className="record-actions"><button className="text-button muted" type="button" onClick={() => void resetPassword(user)}>Reset</button><button className="text-button muted" type="button" onClick={() => void offboard(user)}>Offboard</button></span>}</div>)}</div></div>
-      <div className="people-section"><div className="section-heading"><div><p className="eyebrow">Structure</p><h2>{departments.length} departments</h2></div></div><form className="compact-form" onSubmit={createDepartment}><input value={departmentForm.name} onChange={(event) => setDepartmentForm({ ...departmentForm, name: event.target.value })} placeholder="Department name" required /><input value={departmentForm.slug} onChange={(event) => setDepartmentForm({ ...departmentForm, slug: event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-") })} placeholder="slug" required /><button className="text-button" type="submit">Add department <ArrowUpRight size={15} /></button></form><div className="record-list">{departments.map((department) => <div className="record-row" key={department.id}><span className="record-avatar department-avatar"><BriefcaseBusiness size={15} /></span><span className="record-copy"><strong>{department.name}</strong><small>{department.slug}</small></span></div>)}</div></div>
+      <div className="people-section"><div className="section-heading"><div><p className="eyebrow">Directory</p><h2>{users.length} people</h2></div></div><div className="record-list">{users.map((user) => <div className="record-row" key={user.id}><span className="record-avatar">{user.display_name.slice(0, 1).toUpperCase()}</span><span className="record-copy"><strong>{user.display_name}</strong><small>{user.username ? `@${user.username} · ` : ""}{user.email}</small></span><span className={`status-pill ${user.status === "offboarded" ? "leave-rejected" : ""}`}>{user.status}</span>{user.status !== "offboarded" && <span className="record-actions"><button className="text-button muted" type="button" onClick={() => void resetPassword(user)}>Reset</button><button className="text-button muted" type="button" onClick={() => void offboard(user)}>Offboard</button></span>}</div>)}</div></div>
+      <div className="people-section"><div className="section-heading"><div><p className="eyebrow">Structure</p><h2>{departments.length} departments</h2></div></div><form className="compact-form" onSubmit={createDepartment}><input value={departmentForm.name} onChange={(event) => setDepartmentForm({ ...departmentForm, name: event.target.value })} placeholder="Department name" required /><input value={departmentForm.slug} onChange={(event) => setDepartmentForm({ ...departmentForm, slug: event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-") })} placeholder="slug" required /><button className="text-button" type="submit">Add department <ArrowUpRight size={15} /></button></form><div className="record-list">{departments.map((department) => <div className="record-row" key={department.id}><span className="record-avatar department-avatar"><BriefcaseBusiness size={15} /></span><span className="record-copy"><strong>{department.name}</strong><small>{department.slug}{department.is_core ? " · core" : ""}</small></span><span className="record-actions"><button className="text-button muted" type="button" onClick={() => void renameDepartment(department)}>Rename</button><button className="text-button muted" type="button" onClick={() => void archiveDepartment(department)}>Remove</button></span></div>)}</div></div>
+    </div>
+    <div className="rbac-panel">
+      <div className="section-heading"><div><p className="eyebrow">Credentials generator</p><h2>Issue login accounts</h2></div></div>
+      <p className="lede" style={{ marginBottom: 16 }}>Creates username, temporary password, and employee ID, then assigns the person to a department workspace.</p>
+      <form className="compact-form role-form" onSubmit={(event) => void generateCredentials(event)}>
+        <div className="form-grid">
+          <input placeholder="Full name" value={credForm.display_name} onChange={(e) => setCredForm({ ...credForm, display_name: e.target.value })} required />
+          <Dropdown value={credForm.department_id} options={[{ value: "", label: "Department" }, ...departments.map((d) => ({ value: d.id, label: d.name }))]} onChange={(value) => setCredForm({ ...credForm, department_id: value })} ariaLabel="Department" placeholder="Department" />
+          <input placeholder="Email (optional)" value={credForm.email} onChange={(e) => setCredForm({ ...credForm, email: e.target.value })} />
+          <label className="checkbox-inline"><input type="checkbox" checked={credForm.is_head} onChange={(e) => setCredForm({ ...credForm, is_head: e.target.checked })} /> Department head</label>
+          <button className="primary-button" type="submit">Generate credentials</button>
+        </div>
+      </form>
+      {issued && <div className="record-list" style={{ marginTop: 16 }}><div className="record-row"><span className="record-avatar department-avatar"><KeyRound size={15} /></span><span className="record-copy"><strong>{issued.display_name}</strong><small>username <code>{issued.username}</code> · password <code>{issued.password}</code> · employee ID <code>{issued.employee_id}</code></small></span></div></div>}
     </div>
     <div className="rbac-panel">
       <div className="section-heading"><div><p className="eyebrow">Department membership</p><h2>{memberships.length} assignments</h2></div></div>
-      <p className="lede" style={{ marginBottom: 16 }}>Assign people to a department so they can enter that workspace. Heads get manage access by default.</p>
+      <p className="lede" style={{ marginBottom: 16 }}>Assign people to a department so they can enter that workspace. Heads get manage access by default. Primary drives post-login home.</p>
       <form className="compact-form role-form" onSubmit={(event) => void assignMembership(event)}>
         <div className="form-grid">
           <Dropdown value={membershipForm.user_id} options={[{ value: "", label: "Select person" }, ...users.filter((u) => u.status !== "offboarded").map((user) => ({ value: user.id, label: user.display_name }))]} onChange={(value) => setMembershipForm({ ...membershipForm, user_id: value })} ariaLabel="Person" placeholder="Select person" />
@@ -3345,6 +3498,7 @@ function LoadingScreen() {
 }
 
 function AuthScreen({ mode, theme, onThemeToggle, onAuthenticated }: { mode: "setup" | "login"; theme: Theme; onThemeToggle: () => void; onAuthenticated: (user: CurrentUser) => void }) {
+  const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -3361,11 +3515,11 @@ function AuthScreen({ mode, theme, onThemeToggle, onAuthenticated }: { mode: "se
     setSubmitting(true);
     try {
       if (mode === "setup") {
-        const setupResponse = await fetch(`${apiBase}/setup`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ organization_name: organizationName, organization_slug: organizationSlug, name, email, password }) });
+        const setupResponse = await fetch(`${apiBase}/setup`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ organization_name: organizationName, organization_slug: organizationSlug, name, email, username: username || email.split("@")[0], password }) });
         if (!setupResponse.ok) throw new Error((await setupResponse.json()).error ?? "Could not complete setup");
       }
 
-      const loginResponse = await fetch(`${apiBase}/auth/login`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password, code }) });
+      const loginResponse = await fetch(`${apiBase}/auth/login`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: mode === "login" ? username : (username || email), email, password, code }) });
       if (!loginResponse.ok) {
         const body = await loginResponse.json();
         if (body.mfa_required) {
@@ -3387,10 +3541,10 @@ function AuthScreen({ mode, theme, onThemeToggle, onAuthenticated }: { mode: "se
 
   return <main className="auth-shell">
     <section className="auth-panel">
-      <div className="auth-heading"><div className="brand-mark">N</div><p className="eyebrow">Name · Private workspace</p><h1>{mode === "setup" ? "Set up your company." : "Welcome back."}</h1><p className="lede">{mode === "setup" ? "Create the first owner account for this installation." : "Sign in to continue to your workspace."}</p></div>
+      <div className="auth-heading"><div className="brand-mark">N</div><p className="eyebrow">Name · Private workspace</p><h1>{mode === "setup" ? "Set up your company." : "Welcome back."}</h1><p className="lede">{mode === "setup" ? "Create the first owner account for this installation." : "Sign in with the username and password issued by your company."}</p></div>
       <form className="auth-form" onSubmit={submit}>
-        {mode === "setup" && <><label>Company name<input value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} placeholder="Acme Company" required /></label><label>Company slug<input value={organizationSlug} onChange={(event) => setOrganizationSlug(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))} placeholder="acme-company" required /></label><label>Your name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Lucas Marshall" required /></label></>}
-        <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" required /></label>
+        {mode === "setup" && <><label>Company name<input value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} placeholder="Acme Company" required /></label><label>Company slug<input value={organizationSlug} onChange={(event) => setOrganizationSlug(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))} placeholder="acme-company" required /></label><label>Your name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Lucas Marshall" required /></label><label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" required /></label><label>Username<input value={username} onChange={(event) => setUsername(event.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, ""))} placeholder="optional — defaults from email" /></label></>}
+        {mode === "login" && <label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="company-issued username" autoComplete="username" required /></label>}
         <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 12 characters" minLength={12} required /></label>
         {mfaRequired && <label>Verification code<input inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(event) => setCode(event.target.value.replace(/[^0-9]/g, "").slice(0, 6))} placeholder="6-digit code" required /></label>}
         {error && <p className="form-error" role="alert">{error}</p>}
