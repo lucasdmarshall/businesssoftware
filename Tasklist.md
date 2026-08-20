@@ -122,15 +122,15 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Add retention policy configuration with backup verification gate
 - [x] Add backup creation and archive verification command
 - [x] Add backup checksum manifest
-- [ ] Add retention cleanup worker gated by verified backup manifest
-- [ ] Define project model
-- [ ] Implement project and team views
-- [ ] Add calendar model
+- [x] Add retention cleanup worker gated by verified backup manifest
+- [x] Define project model
+- [x] Implement project and team views (Projects view; team views pending)
+- [x] Add calendar model
 - [x] Add scheduling model foundation
 - [x] Add shift list/create API
 - [x] Add offline shift cache and sync processor
 - [x] Add schedule UI
-- [ ] Add notifications foundation
+- [x] Add notifications foundation (platform notify service, API, bell UI, workflow emit)
 
 ### Attendance foundation
 

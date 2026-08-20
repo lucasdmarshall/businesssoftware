@@ -84,6 +84,12 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .workflow-actions { display: flex; align-items: center; gap: 12px; margin-top: 16px; flex-wrap: wrap; }.workflow-actions input { flex: 1; min-width: 220px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); padding: 10px 12px; font: inherit; font-size: 11px; }.workflow-actions input:focus { border-color: var(--accent); outline: none; }
 .workflow-step-row { display: grid; grid-template-columns: 1.4fr 1.4fr .7fr .8fr .8fr auto; gap: 8px; align-items: center; margin-bottom: 10px; }.workflow-step-row input { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); padding: 10px 11px; font: inherit; font-size: 11px; }.workflow-step-row input:focus { border-color: var(--accent); outline: none; }
 .record-actions { display: flex; align-items: center; gap: 12px; margin-left: 14px; }.record-actions .text-button { font-size: 11px; }
+.notification-bell { position: relative; }
+.notification-badge { position: absolute; top: -6px; right: -8px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--warning); color: var(--background); font-size: 9px; font-weight: 700; display: grid; place-items: center; }
+.notification-panel { position: absolute; top: 34px; right: 0; z-index: 40; width: 320px; max-height: 420px; overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,.16); padding: 14px 16px; }
+.notification-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.notification-row { display: grid; gap: 4px; padding: 12px 0; border-bottom: 1px solid var(--line); }.notification-row:last-child { border-bottom: 0; }.notification-row strong { font-size: 12px; font-weight: 600; }.notification-row small { color: var(--muted); font-size: 10px; }.notification-row.unread strong { color: var(--accent); }
+.calendar-allday { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
 
 /* Tablet: tighten the shell and let the two-column people grid stack. */
 @media (max-width: 1080px) {

@@ -152,6 +152,9 @@ Completed in this milestone:
 - Phase 3 security completed (except team scope): privileged-user MFA foundation (RFC 6238 TOTP with enroll/verify/disable and login enforcement, `internal/mfa`, migration `016_mfa_and_security.sql`), admin password reset and self-service password change (both revoke sessions), offboarding access revocation (status + session/role/MFA removal), and role unassignment for permission-change audit history
 - Login now enforces MFA when enabled and returns `mfa_required`; the auth screen collects the code, People adds admin reset/offboard actions, and a Security panel lets users change their password and enroll TOTP
 - MFA TOTP validated against the RFC 6238 test vector; new Go test packages cover TOTP and the httpapi helpers
+- Phase 4 shared work management: project model (with task project links), calendar events with time-conflict detection, the platform notifications service, and the backup-gated attachment retention worker (migration `017_projects_calendar_notifications.sql`)
+- Notifications flow end to end: shared `internal/notify` emit helper, a per-user notifications API, a topbar bell with unread badge, and workflow approve/reject emitting to the submitter
+- Frontend gained Projects and Calendar views (calendar create surfaces overlap conflicts); calendar `Overlaps` helper is unit tested alongside the growing Go test suite
 
 Next actions:
 

@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import {
   Activity,
   ArrowUpRight,
+  Bell,
   BriefcaseBusiness,
   CheckCircle2,
   ChevronDown,
@@ -9,6 +10,7 @@ import {
   ClipboardCheck,
   Clock3,
   CalendarDays,
+  FolderKanban,
   LayoutDashboard,
   Moon,
   PanelLeft,
@@ -35,16 +37,22 @@ type WorkflowDefinition = { id: string; code: string; name: string; entity_type:
 type WorkflowActionEntry = { id: string; step_order: number | null; actor_name: string; action: string; reason: string; created_at: string };
 type WorkflowInstance = { id: string; definition_id: string; definition_name: string; title: string; entity_type: string; amount: number | null; status: string; current_step_order: number | null; current_step_name: string; submitted_by: string; submitter_name: string; created_at: string; updated_at: string; actions?: WorkflowActionEntry[] };
 
+type NotificationItem = { id: string; kind: string; title: string; body: string; entity_type: string; entity_id: string; read_at: string | null; created_at: string };
+type ProjectItem = { id: string; key: string; name: string; description: string; status: string; lead_id: string; lead_name: string; task_count: number; created_at: string };
+type CalendarEvent = { id: string; title: string; description: string; starts_at: string; ends_at: string; all_day: boolean; visibility: string; creator_name: string };
+
 const workflowStatusClass: Record<string, string> = { in_review: "leave-pending", approved: "leave-approved", rejected: "leave-rejected", cancelled: "leave-rejected", draft: "" };
 
-const viewForLabel = (label: string): string => label === "People" ? "people" : label === "Work" ? "work" : label === "Approvals" ? "approvals" : label === "Attendance" ? "attendance" : label === "Leave" ? "leave" : label === "Schedule" ? "schedule" : label === "Activity" ? "activity" : "overview";
+const viewForLabel = (label: string): string => label === "People" ? "people" : label === "Work" ? "work" : label === "Projects" ? "projects" : label === "Approvals" ? "approvals" : label === "Calendar" ? "calendar" : label === "Attendance" ? "attendance" : label === "Leave" ? "leave" : label === "Schedule" ? "schedule" : label === "Activity" ? "activity" : "overview";
 
 const apiBase = "http://localhost:8080/api/v1";
 
 const navigation = [
   { label: "Overview", icon: LayoutDashboard, active: true },
   { label: "Work", icon: BriefcaseBusiness, permission: "tasks.read" },
+  { label: "Projects", icon: FolderKanban, permission: "projects.read" },
   { label: "Approvals", icon: ClipboardCheck, permission: "workflow.read" },
+  { label: "Calendar", icon: CalendarDays, permission: "calendar.read" },
   { label: "Attendance", icon: Clock3, permission: "attendance.read" },
   { label: "Leave", icon: CalendarDays, permission: "leave.read" },
   { label: "Schedule", icon: CalendarDays, permission: "shifts.read" },
@@ -183,11 +191,12 @@ function App() {
           <div className="breadcrumb">Overview <span>/</span> Workspace</div>
           <div className="topbar-actions">
             <button className="search-button" type="button"><Search size={16} aria-hidden="true" /> Search <kbd>⌘ K</kbd></button>
+            <NotificationBell />
             <span className={`status-dot ${systemHealth.status !== "ok" ? "offline" : ""}`} role="status" aria-label={`Backend ${systemHealth.status}, database ${systemHealth.database}`} title={`Backend: ${systemHealth.status} · Database: ${systemHealth.database}`} />
           </div>
         </header>
 
-        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "approvals" ? <WorkflowView /> : activeView === "attendance" ? <AttendanceView /> : activeView === "leave" ? <LeaveView /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : <section className="content-wrap">
+        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "projects" ? <ProjectsView /> : activeView === "approvals" ? <WorkflowView /> : activeView === "calendar" ? <CalendarView /> : activeView === "attendance" ? <AttendanceView /> : activeView === "leave" ? <LeaveView /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : <section className="content-wrap">
           <div className="page-heading">
             <div>
               <p className="eyebrow">Wednesday, 20 August 2026</p>
@@ -398,6 +407,104 @@ function ActivityView() {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   useEffect(() => { void fetch(`${apiBase}/audit-logs`, { credentials: "include" }).then((response) => response.ok ? response.json() : []).then(setEntries).catch(() => setEntries([])); }, []);
   return <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">Activity</p><h1>Know what changed.</h1><p className="lede">A durable record of privileged actions in this private installation.</p></div></div><div className="section-heading task-heading"><div><p className="eyebrow">Audit trail</p><h2>{entries.length} events</h2></div></div><div className="activity-list">{entries.map((entry) => <div className="activity-row" key={entry.id}><span className="activity-icon"><Activity size={16} /></span><span className="activity-copy"><strong>{entry.action}</strong><small>{entry.actor_name} · {entry.entity_type} · {new Date(entry.created_at).toLocaleString()}</small></span></div>)}</div></section>;
+}
+
+function NotificationBell() {
+  const [items, setItems] = useState<NotificationItem[]>([]);
+  const [unread, setUnread] = useState(0);
+  const [open, setOpen] = useState(false);
+
+  const load = async () => {
+    try {
+      const response = await fetch(`${apiBase}/notifications`, { credentials: "include" });
+      if (!response.ok) return;
+      const data = await response.json() as { notifications: NotificationItem[]; unread: number };
+      setItems(data.notifications ?? []);
+      setUnread(data.unread ?? 0);
+    } catch {
+      // Offline or signed out; leave the last known state.
+    }
+  };
+  useEffect(() => { void load(); const timer = setInterval(() => void load(), 30000); return () => clearInterval(timer); }, []);
+
+  const markAllRead = async () => {
+    await fetch(`${apiBase}/notifications/read`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ all: true }) });
+    await load();
+  };
+
+  return <div className="notification-bell">
+    <button className="search-button" type="button" aria-label={`Notifications, ${unread} unread`} onClick={() => { setOpen((value) => !value); if (!open) void load(); }}>
+      <Bell size={16} aria-hidden="true" />
+      {unread > 0 && <span className="notification-badge">{unread > 9 ? "9+" : unread}</span>}
+    </button>
+    {open && <div className="notification-panel">
+      <div className="notification-head"><p className="eyebrow">Notifications</p>{unread > 0 && <button className="text-button" type="button" onClick={() => void markAllRead()}>Mark all read</button>}</div>
+      {items.length === 0 ? <p className="lede" style={{ fontSize: 12, padding: "8px 0" }}>You are all caught up.</p> : <div className="record-list">{items.slice(0, 12).map((item) => <div className={`notification-row ${item.read_at ? "" : "unread"}`} key={item.id}><strong>{item.title}</strong><small>{item.body} · {new Date(item.created_at).toLocaleString()}</small></div>)}</div>}
+    </div>}
+  </div>;
+}
+
+function ProjectsView() {
+  const [projects, setProjects] = useState<ProjectItem[]>([]);
+  const [users, setUsers] = useState<Array<{ id: string; display_name: string }>>([]);
+  const [form, setForm] = useState({ key: "", name: "", description: "", lead_id: "" });
+  const [message, setMessage] = useState("");
+
+  const load = async () => {
+    const [projectsResponse, usersResponse] = await Promise.all([
+      fetch(`${apiBase}/projects`, { credentials: "include" }),
+      fetch(`${apiBase}/users`, { credentials: "include" }),
+    ]);
+    if (projectsResponse.ok) setProjects(await projectsResponse.json());
+    if (usersResponse.ok) setUsers(await usersResponse.json());
+  };
+  useEffect(() => { void load(); }, []);
+
+  const create = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const response = await fetch(`${apiBase}/projects`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+    setMessage(response.ok ? "Project created" : ((await response.json()).error?.message ?? "Could not create project"));
+    if (response.ok) { setForm({ key: "", name: "", description: "", lead_id: "" }); await load(); }
+  };
+
+  return <section className="content-wrap">
+    <div className="page-heading"><div><p className="eyebrow">Work</p><h1>Projects.</h1><p className="lede">Group tasks under the initiatives your teams are delivering.</p></div></div>
+    {message && <p className="inline-message">{message}</p>}
+    <div className="section-heading task-heading"><div><p className="eyebrow">Portfolio</p><h2>{projects.length} projects</h2></div></div>
+    <div className="record-list">{projects.map((project) => <div className="record-row" key={project.id}><span className="record-avatar">{project.key.slice(0, 2)}</span><span className="record-copy"><strong>{project.name}</strong><small>{project.key} · {project.task_count} tasks{project.lead_name ? ` · lead ${project.lead_name}` : ""}</small></span><span className={`status-pill ${project.status === "active" ? "" : "leave-pending"}`}>{project.status.replace("_", " ")}</span></div>)}</div>
+    <form className="user-form" onSubmit={create}><p className="eyebrow">New project</p><div className="form-grid"><input placeholder="Key (e.g. MKT)" value={form.key} onChange={(event) => setForm({ ...form, key: event.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, "") })} required /><input placeholder="Project name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required /><select value={form.lead_id} onChange={(event) => setForm({ ...form, lead_id: event.target.value })}><option value="">Project lead (optional)</option>{users.map((user) => <option key={user.id} value={user.id}>{user.display_name}</option>)}</select></div><input placeholder="Description (optional)" value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /><button className="primary-button" type="submit">Create project</button></form>
+  </section>;
+}
+
+function CalendarView() {
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [form, setForm] = useState({ title: "", starts_at: "", ends_at: "", all_day: false, visibility: "organization" });
+  const [message, setMessage] = useState("");
+
+  const load = async () => {
+    const response = await fetch(`${apiBase}/calendar/events`, { credentials: "include" });
+    if (response.ok) setEvents(await response.json());
+  };
+  useEffect(() => { void load(); }, []);
+
+  const create = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const body = { title: form.title, all_day: form.all_day, visibility: form.visibility, starts_at: new Date(form.starts_at).toISOString(), ends_at: new Date(form.ends_at).toISOString() };
+    const response = await fetch(`${apiBase}/calendar/events`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!response.ok) { setMessage((await response.json()).error?.message ?? "Could not create event"); return; }
+    const data = await response.json() as { conflict: boolean };
+    setMessage(data.conflict ? "Event created · note: it overlaps another of your events" : "Event created");
+    setForm({ title: "", starts_at: "", ends_at: "", all_day: false, visibility: "organization" });
+    await load();
+  };
+
+  return <section className="content-wrap">
+    <div className="page-heading"><div><p className="eyebrow">Schedule</p><h1>Calendar.</h1><p className="lede">Shared events for the organization, with conflict detection on your own schedule.</p></div></div>
+    {message && <p className="inline-message">{message}</p>}
+    <div className="section-heading task-heading"><div><p className="eyebrow">Upcoming</p><h2>{events.length} events</h2></div></div>
+    <div className="record-list">{events.map((item) => <div className="record-row" key={item.id}><span className="record-avatar department-avatar"><CalendarDays size={15} /></span><span className="record-copy"><strong>{item.title}</strong><small>{new Date(item.starts_at).toLocaleString()} → {new Date(item.ends_at).toLocaleString()}{item.creator_name ? ` · ${item.creator_name}` : ""}</small></span><span className="status-pill">{item.visibility}</span></div>)}</div>
+    <form className="leave-form" onSubmit={create}><p className="eyebrow">New event</p><input placeholder="Event title" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required /><div className="form-grid"><input type="datetime-local" value={form.starts_at} onChange={(event) => setForm({ ...form, starts_at: event.target.value })} required /><input type="datetime-local" value={form.ends_at} onChange={(event) => setForm({ ...form, ends_at: event.target.value })} required /><select value={form.visibility} onChange={(event) => setForm({ ...form, visibility: event.target.value })}><option value="organization">Organization</option><option value="private">Private</option></select></div><label className="calendar-allday"><input type="checkbox" checked={form.all_day} onChange={(event) => setForm({ ...form, all_day: event.target.checked })} /> All day</label><button className="primary-button" type="submit">Add event</button></form>
+  </section>;
 }
 
 function WorkflowView() {

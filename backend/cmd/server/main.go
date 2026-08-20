@@ -12,11 +12,14 @@ import (
 	"name/backend/internal/attendance"
 	"name/backend/internal/audit"
 	"name/backend/internal/auth"
+	"name/backend/internal/calendar"
 	"name/backend/internal/config"
 	"name/backend/internal/database"
 	"name/backend/internal/httpapi"
 	"name/backend/internal/leave"
+	"name/backend/internal/notifications"
 	"name/backend/internal/orgstructure"
+	"name/backend/internal/projects"
 	"name/backend/internal/rbac"
 	"name/backend/internal/shifts"
 	"name/backend/internal/sync"
@@ -89,9 +92,10 @@ func main() {
 	syncHandler := sync.Handler{DB: pool, Auth: authHandler}
 	mux.HandleFunc("POST /api/v1/sync/push", syncHandler.Push)
 	mux.HandleFunc("GET /api/v1/sync/pull", syncHandler.Pull)
-	taskHandler := tasks.Handler{DB: pool, Auth: authHandler, StoragePath: cfg.StoragePath, ClamScanPath: cfg.ClamScanPath}
+	taskHandler := tasks.Handler{DB: pool, Auth: authHandler, StoragePath: cfg.StoragePath, ClamScanPath: cfg.ClamScanPath, RetentionDays: cfg.RetentionDays, BackupVerified: cfg.BackupVerified}
 	if pool != nil {
 		go taskHandler.StartRecurringWorker(context.Background())
+		go taskHandler.StartRetentionWorker(context.Background())
 	}
 	mux.Handle("GET /api/v1/tasks", authHandler.RequirePermission("tasks.read", http.HandlerFunc(taskHandler.List)))
 	mux.Handle("POST /api/v1/tasks", authHandler.RequirePermission("tasks.manage", http.HandlerFunc(taskHandler.Create)))
@@ -123,6 +127,15 @@ func main() {
 	mux.Handle("POST /api/v1/user-roles", authHandler.RequirePermission("roles.manage", http.HandlerFunc(rbacHandler.Assign)))
 	auditHandler := audit.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/audit-logs", authHandler.RequirePermission("organization.read", http.HandlerFunc(auditHandler.List)))
+	projectHandler := projects.Handler{DB: pool, Auth: authHandler}
+	mux.Handle("GET /api/v1/projects", authHandler.RequirePermission("projects.read", http.HandlerFunc(projectHandler.List)))
+	mux.Handle("POST /api/v1/projects", authHandler.RequirePermission("projects.manage", http.HandlerFunc(projectHandler.Create)))
+	calendarHandler := calendar.Handler{DB: pool, Auth: authHandler}
+	mux.Handle("GET /api/v1/calendar/events", authHandler.RequirePermission("calendar.read", http.HandlerFunc(calendarHandler.List)))
+	mux.Handle("POST /api/v1/calendar/events", authHandler.RequirePermission("calendar.manage", http.HandlerFunc(calendarHandler.Create)))
+	notificationHandler := notifications.Handler{DB: pool, Auth: authHandler}
+	mux.HandleFunc("GET /api/v1/notifications", notificationHandler.List)
+	mux.HandleFunc("POST /api/v1/notifications/read", notificationHandler.MarkRead)
 	orgStructureHandler := orgstructure.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/job-titles", authHandler.RequirePermission("organization.read", http.HandlerFunc(orgStructureHandler.JobTitles)))
 	mux.Handle("POST /api/v1/job-titles", authHandler.RequirePermission("organization.manage", http.HandlerFunc(orgStructureHandler.JobTitles)))

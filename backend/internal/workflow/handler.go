@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"name/backend/internal/auth"
+	"name/backend/internal/notify"
 )
 
 type Handler struct {
@@ -327,10 +328,10 @@ func (h Handler) decide(w http.ResponseWriter, r *http.Request, decision string)
 	}
 	defer tx.Rollback(r.Context())
 
-	var definitionID, status string
+	var definitionID, status, title, submittedBy string
 	var currentStep *int
 	var amount *float64
-	if err := tx.QueryRow(r.Context(), `SELECT definition_id, status, current_step_order, amount FROM workflow_instances WHERE id=$1 AND organization_id=$2 FOR UPDATE`, instanceID, user.OrganizationID).Scan(&definitionID, &status, &currentStep, &amount); err != nil {
+	if err := tx.QueryRow(r.Context(), `SELECT definition_id, status, current_step_order, amount, title, submitted_by FROM workflow_instances WHERE id=$1 AND organization_id=$2 FOR UPDATE`, instanceID, user.OrganizationID).Scan(&definitionID, &status, &currentStep, &amount, &title, &submittedBy); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "request not found"})
 		return
 	}
@@ -363,6 +364,7 @@ func (h Handler) decide(w http.ResponseWriter, r *http.Request, decision string)
 			return
 		}
 		h.audit(r.Context(), user, "workflow.rejected", "workflow_instance", instanceID, map[string]any{"step": *currentStep})
+		_ = notify.EmitUnlessActor(r.Context(), h.DB, user.OrganizationID, user.ID, submittedBy, "workflow.rejected", "Request rejected", title, "workflow_instance", instanceID)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "rejected"})
 		return
 	}
@@ -402,6 +404,9 @@ func (h Handler) decide(w http.ResponseWriter, r *http.Request, decision string)
 		return
 	}
 	h.audit(r.Context(), user, "workflow.approved", "workflow_instance", instanceID, map[string]any{"step": *currentStep, "outcome": outcome})
+	if outcome == "approved" {
+		_ = notify.EmitUnlessActor(r.Context(), h.DB, user.OrganizationID, user.ID, submittedBy, "workflow.approved", "Request approved", title, "workflow_instance", instanceID)
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": outcome})
 }
 

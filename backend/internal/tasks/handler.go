@@ -18,10 +18,12 @@ import (
 )
 
 type Handler struct {
-	DB           *pgxpool.Pool
-	Auth         auth.Handler
-	StoragePath  string
-	ClamScanPath string
+	DB             *pgxpool.Pool
+	Auth           auth.Handler
+	StoragePath    string
+	ClamScanPath   string
+	RetentionDays  int
+	BackupVerified bool
 }
 
 type Task struct {
