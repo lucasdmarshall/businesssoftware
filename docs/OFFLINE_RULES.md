@@ -59,6 +59,7 @@ These require the company server and are never applied from the local queue:
 
 - Permission and role changes
 - Final finance approvals and payroll confirmation
+- Invoice and purchase-request approval / paid / ordered transitions
 - Leave and workflow **approval / rejection** decisions
 - User deletion, offboarding, and access revocation
 - MFA enable/disable and password changes
