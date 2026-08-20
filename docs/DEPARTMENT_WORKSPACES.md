@@ -10,19 +10,22 @@ When the user opens **HR**, navigation becomes HR-scoped:
 
 1. **Overview** — HR KPIs only  
 2. **User Management** — HR people (phone, employee ID, …)  
-3. **Access Control** — visible only to department heads and company-wide
-   privileged users; sets per-user access **inside this department**  
-4. **Attendance** — HR only  
-5. **Calendar** — HR events; **organization-wide events may also appear**  
-6. **Leave** — HR only  
-7. **Schedule** — HR only  
-8. **Salary management** — HR only (amount, withdrawn/not, month, …)  
-9. **Bonus management** — HR only  
+3. **Access Control** — assign a **department position**; access follows that
+   position’s module matrix (optional per-user exceptions on top)  
+4. **Position Visualizer** — list view of the department position ladder
+   (system + **custom** positions). Drag vertically to reorder; **top = highest
+   seniority** in this department. That order answers “who sits above whom.”  
+5. **Attendance** — HR only  
+6. **Calendar** — HR events; **organization-wide events may also appear**  
+7. **Leave** — HR only  
+8. **Schedule** — HR only  
+9. **Salary management** — HR only (amount, withdrawn/not, month, …)  
+10. **Bonus management** — HR only  
    - Columns: Name, Role, Privilege (e.g. punctuality allowance), Amount,
      Debited on (date), ID (system-assigned random 8-digit, stored in DB)  
-10. **Tasks** — HR only (assigned tasks, grouping, goals, projects)  
-11. **Activity** — HR audit trail only  
-12. **Settings** — HR department settings  
+11. **Tasks** — HR only (assigned tasks, grouping, goals, projects)  
+12. **Activity** — HR audit trail only  
+13. **Settings** — HR department settings  
 
 IT, Finance, Sales, etc. get the same *pattern* with their own module set.
 
@@ -37,36 +40,42 @@ IT, Finance, Sales, etc. get the same *pattern* with their own module set.
 Job title alone does **not** grant access. Access is:
 
 1. **Department membership** (which workspaces you may enter), plus  
-2. **Department-scoped permissions** (what you can do inside that workspace), plus  
+2. **Department position** (ladder rank + module rights inside that workspace), plus  
 3. **Company-wide override** (explicit permission, not seniority by title).
+
+This matches how companies normally govern: hierarchy defines who is senior;
+position defines what you can do; exceptions are rare overrides.
+
+## Position ladder (Position Visualizer)
+
+- Default system positions: **Department head → Manager → Employee**
+- Departments may add **custom** positions (e.g. Team lead)
+- Visualizer is a **list** (not a graph): drag rows up/down
+- Reorder persists `rank_order` (and a linear parent chain) so the top row is
+  always the highest position in that department
+- Access Control assigns people to a position on this ladder
 
 ## Access Control menu (per department)
 
-- Shown only if the user is a **department head** for that department **or**
-  holds company-wide department access.
-- Edits grants for users **in this department only** (not a global role editor
-  for the whole company — company Owner still has org-wide Access in People /
-  Settings as needed).
+- Shown only if the user’s position grants `access` **or** they hold
+  company-wide department access (heads get manage by default)
+- Primary action: pick a **position** for each member
+- Module checkboxes are **exceptions** layered on position defaults
 
 ## Calendar exception
 
 Department calendars are department-scoped **and** may include events marked
 `visibility = organization` so company-wide announcements still surface.
 
-## Mapping to today’s code (gap)
-
-Today the app is a single shell with org-wide Leave/Attendance/Finance/… pages
-and a soft Overview scope dropdown. That does **not** match this model.
-
-Implementation moves toward:
+## Mapping to today’s code
 
 - Department switcher → enter a workspace  
-- Every HR (etc.) query filtered by `department_id` (deny-by-default)  
-- Company-wide permission bypasses the filter  
-- New HR modules: Salary, Bonus  
-- Per-department Access Control UI  
+- Workspace APIs under `/api/v1/workspaces/departments/...`  
+- Position seed + reorder: migration `031_department_position_access.sql`  
+- Remaining gap: some reused screens (Leave/Attendance/Tasks) still need
+  department-scoped queries end-to-end  
 
 ## Non-goals (for the first cut)
 
-- Automatic permission inheritance from job title strings (“Head of HR”)  
+- Automatic permission inheritance from company job-title catalogue strings  
 - Letting one department peek at another’s operational data without company-wide grant  

@@ -185,6 +185,9 @@ func main() {
 	mux.HandleFunc("GET /api/v1/workspaces/departments", workspaceHandler.List)
 	mux.HandleFunc("GET /api/v1/workspaces/departments/{id}", workspaceHandler.Get)
 	mux.HandleFunc("GET /api/v1/workspaces/departments/{id}/members", workspaceHandler.Members)
+	mux.HandleFunc("GET /api/v1/workspaces/departments/{id}/positions", workspaceHandler.Positions)
+	mux.HandleFunc("POST /api/v1/workspaces/departments/{id}/positions", workspaceHandler.Positions)
+	mux.HandleFunc("POST /api/v1/workspaces/departments/{id}/positions/reorder", workspaceHandler.ReorderPositions)
 	mux.HandleFunc("GET /api/v1/workspaces/departments/{id}/access", workspaceHandler.Access)
 	mux.HandleFunc("POST /api/v1/workspaces/departments/{id}/access", workspaceHandler.Access)
 	mux.HandleFunc("GET /api/v1/workspaces/departments/{id}/salaries", workspaceHandler.Salaries)
@@ -463,6 +466,7 @@ func departmentsHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.Handl
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "department could not be created; slug may already exist"})
 			return
 		}
+		_ = workspace.SeedDepartmentPositions(r.Context(), pool, user.OrganizationID, created.ID)
 		writeJSON(w, http.StatusCreated, created)
 	}
 }
@@ -494,6 +498,17 @@ func userDepartmentsHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.H
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user or department does not belong to this organization"})
 			return
 		}
+		_ = workspace.SeedDepartmentPositions(r.Context(), pool, user.OrganizationID, input.DepartmentID)
+		posCode := "employee"
+		if input.IsHead {
+			posCode = "head"
+		}
+		_, _ = pool.Exec(r.Context(), `
+			UPDATE user_departments SET position_id=p.id, is_head=$3
+			FROM department_positions p
+			WHERE user_departments.user_id=$1 AND user_departments.department_id=$2
+			  AND p.department_id=$2 AND p.code=$4`,
+			input.UserID, input.DepartmentID, input.IsHead, posCode)
 		writeJSON(w, http.StatusOK, map[string]any{"status": "assigned", "is_head": input.IsHead})
 	}
 }

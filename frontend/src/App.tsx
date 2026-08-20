@@ -547,7 +547,7 @@ function DepartmentWorkspaceShell({ workspace, view, onViewChange, onExit, syste
           : view === "access" ? <DeptAccessView departmentId={workspace.id} canManage={manage("access")} />
           : view === "salary" ? <DeptSalaryView departmentId={workspace.id} canManage={manage("salary")} />
           : view === "bonus" ? <DeptBonusView departmentId={workspace.id} canManage={manage("bonus")} />
-          : view === "attendance" ? <AttendanceView />
+          : view === "attendance" ? <AttendanceView canManage={manage("attendance") || Boolean(currentUser?.permissions?.includes("attendance.manage"))} canCompanySettings={Boolean(currentUser?.permissions?.includes("organization.manage"))} />
           : view === "leave" ? <LeaveView canManage={manage("leave") || Boolean(currentUser?.permissions?.includes("leave.manage"))} currentEmail={currentUser?.email ?? ""} />
           : view === "calendar" ? <CalendarView />
           : view === "schedule" ? <ScheduleView />
