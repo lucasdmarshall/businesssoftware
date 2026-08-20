@@ -1995,63 +1995,321 @@ function ReportsView() {
 }
 
 const expenseStatusClass: Record<string, string> = { approved: "leave-approved", rejected: "leave-rejected", in_review: "leave-pending", paid: "leave-approved", submitted: "leave-pending", draft: "" };
+const FINANCE_TABS: Array<{ id: string; label: string }> = [
+  { id: "overview", label: "Overview" },
+  { id: "accounts", label: "Chart of accounts" },
+  { id: "journals", label: "Journals" },
+  { id: "tax", label: "Tax" },
+  { id: "vendors", label: "Vendors" },
+  { id: "bills", label: "Bills (AP)" },
+  { id: "customers", label: "Customers" },
+  { id: "invoices", label: "Invoices (AR)" },
+  { id: "expenses", label: "Expenses" },
+  { id: "payments", label: "Payments" },
+  { id: "budgets", label: "Budgets" },
+  { id: "purchase", label: "Purchase" },
+];
+const ACCOUNT_TYPE_OPTIONS: DropdownOption[] = [
+  { value: "asset", label: "Asset" }, { value: "liability", label: "Liability" }, { value: "equity", label: "Equity" },
+  { value: "revenue", label: "Revenue" }, { value: "expense", label: "Expense" },
+];
+const PAY_METHOD_OPTIONS: DropdownOption[] = [
+  { value: "transfer", label: "Transfer" }, { value: "cash", label: "Cash" }, { value: "card", label: "Card" }, { value: "check", label: "Check" }, { value: "other", label: "Other" },
+];
+
+function money(amount: number, currency = "USD") {
+  return `${currency} ${Number(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+}
 
 function FinanceView() {
-  const [vendors, setVendors] = useState<VendorItem[]>([]);
-  const [expenses, setExpenses] = useState<ExpenseItem[]>([]);
-  const [expenseForm, setExpenseForm] = useState({ description: "", amount: "", category: "general", vendor_id: "" });
-  const [vendorForm, setVendorForm] = useState({ name: "", contact_email: "", contact_phone: "" });
-  const [showVendorForm, setShowVendorForm] = useState(false);
+  const [tab, setTab] = useState("overview");
   const [message, setMessage] = useState("");
+  const [overview, setOverview] = useState<{ cash_balance: number; ap_open: number; ar_open: number; expenses_month: number; bills_open: number; invoices_open: number; currency: string } | null>(null);
+  const [accounts, setAccounts] = useState<Array<{ id: string; code: string; name: string; account_type: string; is_system: boolean }>>([]);
+  const [taxCodes, setTaxCodes] = useState<Array<{ id: string; code: string; name: string; rate_percent: number }>>([]);
+  const [vendors, setVendors] = useState<VendorItem[]>([]);
+  const [customers, setCustomers] = useState<Array<{ id: string; name: string; contact_email: string; contact_phone: string; status: string }>>([]);
+  const [journals, setJournals] = useState<Array<{ id: string; entry_date: string; memo: string; status: string; debit_sum: number; credit_sum: number }>>([]);
+  const [bills, setBills] = useState<Array<{ id: string; vendor_id: string; vendor_name: string; number: string; description: string; amount: number; tax_amount: number; currency: string; status: string; bill_date: string; due_date: string }>>([]);
+  const [payments, setPayments] = useState<Array<{ id: string; direction: string; amount: number; currency: string; method: string; paid_on: string; vendor_name: string; customer_name: string; reference: string }>>([]);
+  const [expenses, setExpenses] = useState<ExpenseItem[]>([]);
+  const [invoices, setInvoices] = useState<Array<{ id: string; number: string; customer_name: string; amount: number; currency: string; status: string }>>([]);
+  const [budgets, setBudgets] = useState<Array<{ id: string; name: string; amount: number; currency: string; period_start: string; period_end: string; spent: number }>>([]);
+  const [purchases, setPurchases] = useState<Array<{ id: string; item: string; amount: number; currency: string; status: string; requester_name: string; approval_status: string }>>([]);
+
+  const [accountForm, setAccountForm] = useState({ code: "", name: "", account_type: "expense" });
+  const [taxForm, setTaxForm] = useState({ code: "", name: "", rate_percent: "10" });
+  const [vendorForm, setVendorForm] = useState({ name: "", contact_email: "", contact_phone: "" });
+  const [customerForm, setCustomerForm] = useState({ name: "", contact_email: "", contact_phone: "" });
+  const [billForm, setBillForm] = useState({ vendor_id: "", number: "", description: "", amount: "", tax_amount: "0", due_date: "", open: true });
+  const [invoiceForm, setInvoiceForm] = useState({ number: "", customer_name: "", amount: "" });
+  const [expenseForm, setExpenseForm] = useState({ description: "", amount: "", category: "general", vendor_id: "" });
+  const [paymentForm, setPaymentForm] = useState({ direction: "out", amount: "", method: "transfer", paid_on: new Date().toISOString().slice(0, 10), vendor_id: "", customer_id: "", bill_id: "", invoice_id: "", reference: "" });
+  const [journalForm, setJournalForm] = useState({ entry_date: new Date().toISOString().slice(0, 10), memo: "", debit_account_id: "", credit_account_id: "", amount: "", post: true });
+  const [budgetForm, setBudgetForm] = useState({ name: "", amount: "", period_start: "", period_end: "" });
+  const [prForm, setPrForm] = useState({ item: "", amount: "", justification: "" });
+  const categories = useLookup("expense_category");
+
+  const post = async (url: string, body: unknown, ok: string) => {
+    const response = await fetch(`${apiBase}${url}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const payload = await response.json().catch(() => null) as { error?: { message?: string } | string } | null;
+    const err = payload?.error;
+    setMessage(response.ok ? ok : (typeof err === "string" ? err : err?.message ?? "Action failed"));
+    return response.ok;
+  };
 
   const load = async () => {
-    const [vendorsResponse, expensesResponse] = await Promise.all([
+    const requests: Array<Promise<Response>> = [
+      fetch(`${apiBase}/finance/overview`, { credentials: "include" }),
+      fetch(`${apiBase}/finance/accounts`, { credentials: "include" }),
+      fetch(`${apiBase}/finance/tax-codes`, { credentials: "include" }),
       fetch(`${apiBase}/vendors`, { credentials: "include" }),
+      fetch(`${apiBase}/finance/customers`, { credentials: "include" }),
+      fetch(`${apiBase}/finance/journals`, { credentials: "include" }),
+      fetch(`${apiBase}/finance/bills`, { credentials: "include" }),
+      fetch(`${apiBase}/finance/payments`, { credentials: "include" }),
       fetch(`${apiBase}/expenses`, { credentials: "include" }),
-    ]);
-    if (vendorsResponse.ok) setVendors(await vendorsResponse.json());
-    if (expensesResponse.ok) setExpenses(await expensesResponse.json());
+      fetch(`${apiBase}/invoices`, { credentials: "include" }),
+      fetch(`${apiBase}/budgets`, { credentials: "include" }),
+      fetch(`${apiBase}/purchase-requests`, { credentials: "include" }),
+    ];
+    const [ov, ac, tx, ve, cu, jo, bi, pa, ex, inv, bu, pr] = await Promise.all(requests);
+    if (ov.ok) setOverview(await ov.json());
+    if (ac.ok) setAccounts(await ac.json());
+    if (tx.ok) setTaxCodes(await tx.json());
+    if (ve.ok) setVendors(await ve.json());
+    if (cu.ok) setCustomers(await cu.json());
+    if (jo.ok) setJournals(await jo.json());
+    if (bi.ok) setBills(await bi.json());
+    if (pa.ok) setPayments(await pa.json());
+    if (ex.ok) setExpenses(await ex.json());
+    if (inv.ok) setInvoices(await inv.json());
+    if (bu.ok) setBudgets(await bu.json());
+    if (pr.ok) setPurchases(await pr.json());
   };
   useEffect(() => { void load(); }, []);
 
-  const createExpense = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const response = await fetch(`${apiBase}/expenses`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ description: expenseForm.description, amount: Number(expenseForm.amount), category: expenseForm.category, vendor_id: expenseForm.vendor_id }) });
-    setMessage(response.ok ? "Expense drafted" : ((await response.json()).error?.message ?? "Could not create expense"));
-    if (response.ok) { setExpenseForm({ description: "", amount: "", category: "general", vendor_id: "" }); await load(); }
-  };
-  const createVendor = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const response = await fetch(`${apiBase}/vendors`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(vendorForm) });
-    setMessage(response.ok ? "Vendor added" : ((await response.json()).error?.message ?? "Could not add vendor"));
-    if (response.ok) { setVendorForm({ name: "", contact_email: "", contact_phone: "" }); setShowVendorForm(false); await load(); }
-  };
-  const act = async (expenseId: string, action: "submit" | "pay") => {
-    const response = await fetch(`${apiBase}/expenses/${expenseId}/${action}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
-    setMessage(response.ok ? (action === "submit" ? "Expense submitted for approval" : "Expense marked paid") : ((await response.json()).error?.message ?? "Action failed"));
-    await load();
-  };
-
-  const money = (item: ExpenseItem) => `${item.currency} ${item.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
-
   return <section className="content-wrap">
-    <div className="page-heading"><div><p className="eyebrow">Finance</p><h1>Expenses & vendors.</h1><p className="lede">Submit expenses for approval through the company workflow, then mark them paid.</p></div><button className="primary-button" type="button" onClick={() => setShowVendorForm((value) => !value)}>{showVendorForm ? "Close" : "Add vendor"}</button></div>
+    <div className="page-heading">
+      <div>
+        <p className="eyebrow">Finance suite</p>
+        <h1>Money, accounted for.</h1>
+        <p className="lede">Ledger spine (accounts + journals), payables, receivables, cash, expenses, and budgets — one suite for the company.</p>
+      </div>
+    </div>
     {message && <p className="inline-message">{message}</p>}
+    <nav className="finance-tabs" aria-label="Finance suite">
+      {FINANCE_TABS.map((item) => (
+        <button key={item.id} type="button" className={`finance-tab ${tab === item.id ? "active" : ""}`} onClick={() => setTab(item.id)}>{item.label}</button>
+      ))}
+    </nav>
 
-    <form className="task-composer workflow-composer" onSubmit={createExpense}>
-      <input placeholder="What was the expense for?" value={expenseForm.description} onChange={(event) => setExpenseForm({ ...expenseForm, description: event.target.value })} required />
-      <input placeholder="Amount" inputMode="decimal" value={expenseForm.amount} onChange={(event) => setExpenseForm({ ...expenseForm, amount: event.target.value.replace(/[^0-9.]/g, "") })} required />
-      <Dropdown value={expenseForm.vendor_id} options={[{ value: "", label: "No vendor" }, ...vendors.map((vendor) => ({ value: vendor.id, label: vendor.name }))]} onChange={(value) => setExpenseForm({ ...expenseForm, vendor_id: value })} ariaLabel="Vendor" placeholder="No vendor" />
-      <button className="primary-button" type="submit">Draft expense</button>
-    </form>
+    {tab === "overview" && overview && <div className="metric-grid">
+      <Metric label="Cash movement" value={money(overview.cash_balance, overview.currency)} change={`${overview.bills_open} open bills`} detail="payments in − payments out" />
+      <Metric label="AP open" value={money(overview.ap_open, overview.currency)} change="vendor bills" detail="open + partial" />
+      <Metric label="AR open" value={money(overview.ar_open, overview.currency)} change={`${overview.invoices_open} invoices`} detail={`expenses this month ${money(overview.expenses_month, overview.currency)}`} />
+    </div>}
 
-    {showVendorForm && <form className="user-form" onSubmit={createVendor}><p className="eyebrow">New vendor</p><div className="form-grid"><input placeholder="Vendor name" value={vendorForm.name} onChange={(event) => setVendorForm({ ...vendorForm, name: event.target.value })} required /><input placeholder="Contact email" value={vendorForm.contact_email} onChange={(event) => setVendorForm({ ...vendorForm, contact_email: event.target.value })} /><input placeholder="Contact phone" value={vendorForm.contact_phone} onChange={(event) => setVendorForm({ ...vendorForm, contact_phone: event.target.value })} /></div><button className="primary-button" type="submit">Add vendor</button></form>}
+    {tab === "accounts" && <>
+      <form className="compact-form" onSubmit={async (event) => { event.preventDefault(); if (await post("/finance/accounts", accountForm, "Account added")) { setAccountForm({ code: "", name: "", account_type: "expense" }); void load(); } }}>
+        <p className="eyebrow">Add account</p>
+        <div className="form-grid">
+          <input placeholder="Code" value={accountForm.code} onChange={(e) => setAccountForm({ ...accountForm, code: e.target.value })} required />
+          <input placeholder="Name" value={accountForm.name} onChange={(e) => setAccountForm({ ...accountForm, name: e.target.value })} required />
+          <Dropdown value={accountForm.account_type} options={ACCOUNT_TYPE_OPTIONS} onChange={(value) => setAccountForm({ ...accountForm, account_type: value })} ariaLabel="Account type" />
+          <button className="primary-button" type="submit">Add</button>
+        </div>
+      </form>
+      <div className="record-list">{accounts.map((account) => <div className="record-row" key={account.id}><span className="record-avatar department-avatar">{account.code.slice(0, 2)}</span><span className="record-copy"><strong>{account.code} · {account.name}</strong><small>{account.account_type}{account.is_system ? " · system" : ""}</small></span></div>)}</div>
+    </>}
 
-    <div className="section-heading task-heading"><div><p className="eyebrow">Expenses</p><h2>{expenses.length} records</h2></div></div>
-    <div className="record-list">{expenses.map((expense) => <div className="record-row" key={expense.id}><span className="record-avatar"><Wallet size={15} /></span><span className="record-copy"><strong>{expense.description} · {money(expense)}</strong><small>{expense.category}{expense.vendor_name ? ` · ${expense.vendor_name}` : ""} · by {expense.submitter_name}{expense.approval_status ? ` · approval: ${expense.approval_status.replace("_", " ")}` : ""}</small></span><span className={`status-pill ${expenseStatusClass[expense.approval_status || expense.status] ?? ""}`}>{expense.status}</span>{expense.status === "draft" && <span className="record-actions"><button className="text-button" type="button" onClick={() => void act(expense.id, "submit")}>Submit</button></span>}{expense.status === "submitted" && (expense.approval_status === "approved" || expense.approval_status === "") && <span className="record-actions"><button className="text-button" type="button" onClick={() => void act(expense.id, "pay")}>Mark paid</button></span>}</div>)}</div>
+    {tab === "tax" && <>
+      <form className="compact-form" onSubmit={async (event) => { event.preventDefault(); if (await post("/finance/tax-codes", { ...taxForm, rate_percent: Number(taxForm.rate_percent) }, "Tax code added")) { setTaxForm({ code: "", name: "", rate_percent: "10" }); void load(); } }}>
+        <p className="eyebrow">Add tax code</p>
+        <div className="form-grid">
+          <input placeholder="Code" value={taxForm.code} onChange={(e) => setTaxForm({ ...taxForm, code: e.target.value })} required />
+          <input placeholder="Name" value={taxForm.name} onChange={(e) => setTaxForm({ ...taxForm, name: e.target.value })} required />
+          <input placeholder="Rate %" inputMode="decimal" value={taxForm.rate_percent} onChange={(e) => setTaxForm({ ...taxForm, rate_percent: e.target.value.replace(/[^0-9.]/g, "") })} required />
+          <button className="primary-button" type="submit">Add</button>
+        </div>
+      </form>
+      <div className="record-list">{taxCodes.map((code) => <div className="record-row" key={code.id}><span className="record-avatar department-avatar">%</span><span className="record-copy"><strong>{code.code} · {code.name}</strong><small>{code.rate_percent}%</small></span></div>)}</div>
+    </>}
 
-    {vendors.length > 0 && <><div className="section-heading task-heading"><div><p className="eyebrow">Vendors</p><h2>{vendors.length}</h2></div></div><div className="record-list">{vendors.map((vendor) => <div className="record-row" key={vendor.id}><span className="record-avatar department-avatar">{vendor.name.slice(0, 2).toUpperCase()}</span><span className="record-copy"><strong>{vendor.name}</strong><small>{vendor.contact_email || "no email"}{vendor.contact_phone ? ` · ${vendor.contact_phone}` : ""}</small></span><span className="status-pill">{vendor.status}</span></div>)}</div></>}
-    <FinanceExtras />
+    {tab === "journals" && <>
+      <form className="compact-form" onSubmit={async (event) => {
+        event.preventDefault();
+        const amount = Number(journalForm.amount);
+        if (!journalForm.debit_account_id || !journalForm.credit_account_id || !(amount > 0)) { setMessage("Debit account, credit account, and amount are required"); return; }
+        const ok = await post("/finance/journals", {
+          entry_date: journalForm.entry_date, memo: journalForm.memo, post: journalForm.post,
+          lines: [
+            { account_id: journalForm.debit_account_id, debit: amount, credit: 0, description: journalForm.memo },
+            { account_id: journalForm.credit_account_id, debit: 0, credit: amount, description: journalForm.memo },
+          ],
+        }, journalForm.post ? "Journal posted" : "Journal drafted");
+        if (ok) { setJournalForm({ ...journalForm, memo: "", amount: "" }); void load(); }
+      }}>
+        <p className="eyebrow">Manual journal (balanced)</p>
+        <div className="form-grid">
+          <DatePicker value={journalForm.entry_date} onChange={(value) => setJournalForm({ ...journalForm, entry_date: value })} ariaLabel="Entry date" />
+          <input placeholder="Memo" value={journalForm.memo} onChange={(e) => setJournalForm({ ...journalForm, memo: e.target.value })} />
+          <input placeholder="Amount" inputMode="decimal" value={journalForm.amount} onChange={(e) => setJournalForm({ ...journalForm, amount: e.target.value.replace(/[^0-9.]/g, "") })} required />
+        </div>
+        <div className="form-grid">
+          <Dropdown value={journalForm.debit_account_id} options={[{ value: "", label: "Debit account" }, ...accounts.map((a) => ({ value: a.id, label: `${a.code} ${a.name}` }))]} onChange={(value) => setJournalForm({ ...journalForm, debit_account_id: value })} ariaLabel="Debit account" placeholder="Debit account" />
+          <Dropdown value={journalForm.credit_account_id} options={[{ value: "", label: "Credit account" }, ...accounts.map((a) => ({ value: a.id, label: `${a.code} ${a.name}` }))]} onChange={(value) => setJournalForm({ ...journalForm, credit_account_id: value })} ariaLabel="Credit account" placeholder="Credit account" />
+          <label className="checkbox-inline"><input type="checkbox" checked={journalForm.post} onChange={(e) => setJournalForm({ ...journalForm, post: e.target.checked })} /> Post now</label>
+          <button className="primary-button" type="submit">Save journal</button>
+        </div>
+      </form>
+      <div className="record-list">{journals.map((journal) => <div className="record-row" key={journal.id}><span className="record-avatar department-avatar">J</span><span className="record-copy"><strong>{journal.entry_date} · {money(journal.debit_sum)}</strong><small>{journal.memo || "No memo"} · credits {money(journal.credit_sum)}</small></span><span className="status-pill">{journal.status}</span>{journal.status === "draft" && <span className="record-actions"><button className="text-button" type="button" onClick={() => void post(`/finance/journals/${journal.id}/post`, {}, "Posted").then((ok) => { if (ok) void load(); })}>Post</button></span>}</div>)}</div>
+    </>}
+
+    {tab === "vendors" && <>
+      <form className="compact-form" onSubmit={async (event) => { event.preventDefault(); if (await post("/vendors", vendorForm, "Vendor added")) { setVendorForm({ name: "", contact_email: "", contact_phone: "" }); void load(); } }}>
+        <p className="eyebrow">Add vendor</p>
+        <div className="form-grid">
+          <input placeholder="Name" value={vendorForm.name} onChange={(e) => setVendorForm({ ...vendorForm, name: e.target.value })} required />
+          <input placeholder="Email" value={vendorForm.contact_email} onChange={(e) => setVendorForm({ ...vendorForm, contact_email: e.target.value })} />
+          <input placeholder="Phone" value={vendorForm.contact_phone} onChange={(e) => setVendorForm({ ...vendorForm, contact_phone: e.target.value })} />
+          <button className="primary-button" type="submit">Add</button>
+        </div>
+      </form>
+      <div className="record-list">{vendors.map((vendor) => <div className="record-row" key={vendor.id}><span className="record-avatar department-avatar">{vendor.name.slice(0, 2).toUpperCase()}</span><span className="record-copy"><strong>{vendor.name}</strong><small>{vendor.contact_email || "no email"}{vendor.contact_phone ? ` · ${vendor.contact_phone}` : ""}</small></span><span className="status-pill">{vendor.status}</span></div>)}</div>
+    </>}
+
+    {tab === "customers" && <>
+      <form className="compact-form" onSubmit={async (event) => { event.preventDefault(); if (await post("/finance/customers", customerForm, "Customer added")) { setCustomerForm({ name: "", contact_email: "", contact_phone: "" }); void load(); } }}>
+        <p className="eyebrow">Add customer</p>
+        <div className="form-grid">
+          <input placeholder="Name" value={customerForm.name} onChange={(e) => setCustomerForm({ ...customerForm, name: e.target.value })} required />
+          <input placeholder="Email" value={customerForm.contact_email} onChange={(e) => setCustomerForm({ ...customerForm, contact_email: e.target.value })} />
+          <input placeholder="Phone" value={customerForm.contact_phone} onChange={(e) => setCustomerForm({ ...customerForm, contact_phone: e.target.value })} />
+          <button className="primary-button" type="submit">Add</button>
+        </div>
+      </form>
+      <div className="record-list">{customers.map((customer) => <div className="record-row" key={customer.id}><span className="record-avatar department-avatar">{customer.name.slice(0, 2).toUpperCase()}</span><span className="record-copy"><strong>{customer.name}</strong><small>{customer.contact_email || "no email"}{customer.contact_phone ? ` · ${customer.contact_phone}` : ""}</small></span><span className="status-pill">{customer.status}</span></div>)}</div>
+    </>}
+
+    {tab === "bills" && <>
+      <form className="compact-form" onSubmit={async (event) => { event.preventDefault(); if (await post("/finance/bills", { ...billForm, amount: Number(billForm.amount), tax_amount: Number(billForm.tax_amount || 0) }, "Bill created")) { setBillForm({ vendor_id: "", number: "", description: "", amount: "", tax_amount: "0", due_date: "", open: true }); void load(); } }}>
+        <p className="eyebrow">Vendor bill (AP)</p>
+        <div className="form-grid">
+          <Dropdown value={billForm.vendor_id} options={[{ value: "", label: "Vendor" }, ...vendors.map((v) => ({ value: v.id, label: v.name }))]} onChange={(value) => setBillForm({ ...billForm, vendor_id: value })} ariaLabel="Vendor" placeholder="Vendor" />
+          <input placeholder="Bill #" value={billForm.number} onChange={(e) => setBillForm({ ...billForm, number: e.target.value })} required />
+          <input placeholder="Amount" inputMode="decimal" value={billForm.amount} onChange={(e) => setBillForm({ ...billForm, amount: e.target.value.replace(/[^0-9.]/g, "") })} required />
+          <DatePicker value={billForm.due_date} onChange={(value) => setBillForm({ ...billForm, due_date: value })} placeholder="Due date" ariaLabel="Due date" />
+        </div>
+        <div className="form-grid">
+          <input placeholder="Description" value={billForm.description} onChange={(e) => setBillForm({ ...billForm, description: e.target.value })} />
+          <input placeholder="Tax amount" inputMode="decimal" value={billForm.tax_amount} onChange={(e) => setBillForm({ ...billForm, tax_amount: e.target.value.replace(/[^0-9.]/g, "") })} />
+          <label className="checkbox-inline"><input type="checkbox" checked={billForm.open} onChange={(e) => setBillForm({ ...billForm, open: e.target.checked })} /> Open immediately</label>
+          <button className="primary-button" type="submit">Save bill</button>
+        </div>
+      </form>
+      <div className="record-list">{bills.map((bill) => <div className="record-row" key={bill.id}><span className="record-avatar department-avatar">AP</span><span className="record-copy"><strong>{bill.number} · {money(bill.amount + bill.tax_amount, bill.currency)}</strong><small>{bill.vendor_name} · due {bill.due_date || "—"}{bill.description ? ` · ${bill.description}` : ""}</small></span><span className="status-pill">{bill.status}</span>{bill.status === "draft" && <span className="record-actions"><button className="text-button" type="button" onClick={() => void post("/finance/bills/status", { id: bill.id, status: "open" }, "Bill opened").then((ok) => { if (ok) void load(); })}>Open</button></span>}{(bill.status === "open" || bill.status === "partial") && <span className="record-actions"><button className="text-button" type="button" onClick={() => { setTab("payments"); setPaymentForm((current) => ({ ...current, direction: "out", vendor_id: bill.vendor_id, bill_id: bill.id, amount: String(bill.amount + bill.tax_amount) })); }}>Pay</button></span>}</div>)}</div>
+    </>}
+
+    {tab === "invoices" && <>
+      <form className="compact-form" onSubmit={async (event) => { event.preventDefault(); if (await post("/invoices", { number: invoiceForm.number, customer_name: invoiceForm.customer_name, amount: Number(invoiceForm.amount) }, "Invoice created")) { setInvoiceForm({ number: "", customer_name: "", amount: "" }); void load(); } }}>
+        <p className="eyebrow">Customer invoice (AR)</p>
+        <div className="form-grid">
+          <input placeholder="Invoice #" value={invoiceForm.number} onChange={(e) => setInvoiceForm({ ...invoiceForm, number: e.target.value })} required />
+          <input placeholder="Customer name" value={invoiceForm.customer_name} onChange={(e) => setInvoiceForm({ ...invoiceForm, customer_name: e.target.value })} required />
+          <input placeholder="Amount" inputMode="decimal" value={invoiceForm.amount} onChange={(e) => setInvoiceForm({ ...invoiceForm, amount: e.target.value.replace(/[^0-9.]/g, "") })} required />
+          <button className="primary-button" type="submit">Add</button>
+        </div>
+      </form>
+      <div className="record-list">{invoices.map((inv) => <div className="record-row" key={inv.id}><span className="record-avatar department-avatar">AR</span><span className="record-copy"><strong>{inv.number} · {money(inv.amount, inv.currency)}</strong><small>{inv.customer_name}</small></span><span className="status-pill">{inv.status}</span>{inv.status === "draft" && <span className="record-actions"><button className="text-button" type="button" onClick={() => void post("/invoices/status", { id: inv.id, status: "sent" }, "Marked sent").then((ok) => { if (ok) void load(); })}>Send</button></span>}{(inv.status === "sent" || inv.status === "overdue") && <span className="record-actions"><button className="text-button" type="button" onClick={() => { setTab("payments"); setPaymentForm((current) => ({ ...current, direction: "in", invoice_id: inv.id, amount: String(inv.amount), customer_id: "" })); }}>Receive</button></span>}</div>)}</div>
+    </>}
+
+    {tab === "expenses" && <>
+      <form className="compact-form" onSubmit={async (event) => { event.preventDefault(); if (await post("/expenses", { description: expenseForm.description, amount: Number(expenseForm.amount), category: expenseForm.category, vendor_id: expenseForm.vendor_id }, "Expense drafted")) { setExpenseForm({ description: "", amount: "", category: categories[0]?.value || "general", vendor_id: "" }); void load(); } }}>
+        <p className="eyebrow">Draft expense</p>
+        <div className="form-grid">
+          <input placeholder="Description" value={expenseForm.description} onChange={(e) => setExpenseForm({ ...expenseForm, description: e.target.value })} required />
+          <input placeholder="Amount" inputMode="decimal" value={expenseForm.amount} onChange={(e) => setExpenseForm({ ...expenseForm, amount: e.target.value.replace(/[^0-9.]/g, "") })} required />
+          <Dropdown value={expenseForm.category} options={(categories.length ? categories : [{ value: "general", label: "General" }]).map((c) => ({ value: c.value, label: c.label, color: c.color }))} onChange={(value) => setExpenseForm({ ...expenseForm, category: value })} ariaLabel="Category" />
+          <Dropdown value={expenseForm.vendor_id} options={[{ value: "", label: "No vendor" }, ...vendors.map((v) => ({ value: v.id, label: v.name }))]} onChange={(value) => setExpenseForm({ ...expenseForm, vendor_id: value })} ariaLabel="Vendor" placeholder="No vendor" />
+          <button className="primary-button" type="submit">Draft</button>
+        </div>
+      </form>
+      <div className="record-list">{expenses.map((expense) => <div className="record-row" key={expense.id}><span className="record-avatar"><Wallet size={15} /></span><span className="record-copy"><strong>{expense.description} · {money(expense.amount, expense.currency)}</strong><small>{expense.category}{expense.vendor_name ? ` · ${expense.vendor_name}` : ""} · by {expense.submitter_name}{expense.approval_status ? ` · approval: ${expense.approval_status.replace("_", " ")}` : ""}</small></span><span className={`status-pill ${expenseStatusClass[expense.approval_status || expense.status] ?? ""}`}>{expense.status}</span>{expense.status === "draft" && <span className="record-actions"><button className="text-button" type="button" onClick={() => void post(`/expenses/${expense.id}/submit`, {}, "Submitted").then((ok) => { if (ok) void load(); })}>Submit</button></span>}{expense.status === "submitted" && (expense.approval_status === "approved" || expense.approval_status === "") && <span className="record-actions"><button className="text-button" type="button" onClick={() => void post(`/expenses/${expense.id}/pay`, {}, "Marked paid").then((ok) => { if (ok) void load(); })}>Mark paid</button></span>}</div>)}</div>
+    </>}
+
+    {tab === "payments" && <>
+      <form className="compact-form" onSubmit={async (event) => {
+        event.preventDefault();
+        const body = {
+          direction: paymentForm.direction,
+          amount: Number(paymentForm.amount),
+          method: paymentForm.method,
+          paid_on: paymentForm.paid_on,
+          reference: paymentForm.reference,
+          vendor_id: paymentForm.direction === "out" ? paymentForm.vendor_id : "",
+          customer_id: paymentForm.direction === "in" ? paymentForm.customer_id : "",
+          bill_id: paymentForm.bill_id,
+          invoice_id: paymentForm.invoice_id,
+        };
+        if (await post("/finance/payments", body, "Payment recorded")) {
+          setPaymentForm({ direction: "out", amount: "", method: "transfer", paid_on: new Date().toISOString().slice(0, 10), vendor_id: "", customer_id: "", bill_id: "", invoice_id: "", reference: "" });
+          void load();
+        }
+      }}>
+        <p className="eyebrow">Record payment</p>
+        <div className="form-grid">
+          <Dropdown value={paymentForm.direction} options={[{ value: "out", label: "Money out (pay vendor)" }, { value: "in", label: "Money in (receive)" }]} onChange={(value) => setPaymentForm({ ...paymentForm, direction: value, bill_id: "", invoice_id: "" })} ariaLabel="Direction" />
+          <input placeholder="Amount" inputMode="decimal" value={paymentForm.amount} onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value.replace(/[^0-9.]/g, "") })} required />
+          <Dropdown value={paymentForm.method} options={PAY_METHOD_OPTIONS} onChange={(value) => setPaymentForm({ ...paymentForm, method: value })} ariaLabel="Method" />
+          <DatePicker value={paymentForm.paid_on} onChange={(value) => setPaymentForm({ ...paymentForm, paid_on: value })} ariaLabel="Paid on" />
+        </div>
+        <div className="form-grid">
+          {paymentForm.direction === "out" ? (
+            <Dropdown value={paymentForm.vendor_id} options={[{ value: "", label: "Vendor" }, ...vendors.map((v) => ({ value: v.id, label: v.name }))]} onChange={(value) => setPaymentForm({ ...paymentForm, vendor_id: value })} ariaLabel="Vendor" placeholder="Vendor" />
+          ) : (
+            <Dropdown value={paymentForm.customer_id} options={[{ value: "", label: "Customer (optional)" }, ...customers.map((c) => ({ value: c.id, label: c.name }))]} onChange={(value) => setPaymentForm({ ...paymentForm, customer_id: value })} ariaLabel="Customer" placeholder="Customer" />
+          )}
+          {paymentForm.direction === "out" ? (
+            <Dropdown value={paymentForm.bill_id} options={[{ value: "", label: "Link bill (optional)" }, ...bills.filter((b) => b.status === "open" || b.status === "partial").map((b) => ({ value: b.id, label: `${b.number} · ${b.vendor_name}` }))]} onChange={(value) => setPaymentForm({ ...paymentForm, bill_id: value })} ariaLabel="Bill" placeholder="Bill" />
+          ) : (
+            <Dropdown value={paymentForm.invoice_id} options={[{ value: "", label: "Link invoice (optional)" }, ...invoices.filter((i) => i.status === "sent" || i.status === "overdue").map((i) => ({ value: i.id, label: `${i.number} · ${i.customer_name}` }))]} onChange={(value) => setPaymentForm({ ...paymentForm, invoice_id: value })} ariaLabel="Invoice" placeholder="Invoice" />
+          )}
+          <input placeholder="Reference" value={paymentForm.reference} onChange={(e) => setPaymentForm({ ...paymentForm, reference: e.target.value })} />
+          <button className="primary-button" type="submit">Record</button>
+        </div>
+      </form>
+      <div className="record-list">{payments.map((payment) => <div className="record-row" key={payment.id}><span className="record-avatar department-avatar">{payment.direction === "in" ? "IN" : "OUT"}</span><span className="record-copy"><strong>{money(payment.amount, payment.currency)} · {payment.method}</strong><small>{payment.paid_on} · {payment.direction === "in" ? (payment.customer_name || "customer") : (payment.vendor_name || "vendor")}{payment.reference ? ` · ${payment.reference}` : ""}</small></span><span className="status-pill">{payment.direction}</span></div>)}</div>
+    </>}
+
+    {tab === "budgets" && <>
+      <form className="compact-form" onSubmit={async (event) => { event.preventDefault(); if (await post("/budgets", { name: budgetForm.name, amount: Number(budgetForm.amount), period_start: budgetForm.period_start, period_end: budgetForm.period_end }, "Budget created")) { setBudgetForm({ name: "", amount: "", period_start: "", period_end: "" }); void load(); } }}>
+        <p className="eyebrow">Budget envelope</p>
+        <div className="form-grid">
+          <input placeholder="Name" value={budgetForm.name} onChange={(e) => setBudgetForm({ ...budgetForm, name: e.target.value })} required />
+          <input placeholder="Amount" inputMode="decimal" value={budgetForm.amount} onChange={(e) => setBudgetForm({ ...budgetForm, amount: e.target.value.replace(/[^0-9.]/g, "") })} required />
+          <DatePicker value={budgetForm.period_start} onChange={(value) => setBudgetForm({ ...budgetForm, period_start: value })} placeholder="Start" ariaLabel="Period start" />
+          <DatePicker value={budgetForm.period_end} onChange={(value) => setBudgetForm({ ...budgetForm, period_end: value })} placeholder="End" ariaLabel="Period end" />
+          <button className="primary-button" type="submit">Add</button>
+        </div>
+      </form>
+      <div className="record-list">{budgets.map((b) => <div className="record-row" key={b.id}><span className="record-avatar department-avatar">$</span><span className="record-copy"><strong>{b.name} · {money(b.amount, b.currency)}</strong><small>{b.period_start} → {b.period_end} · spent {money(b.spent, b.currency)}</small></span><span className={`status-pill ${b.spent > b.amount ? "leave-rejected" : ""}`}>{Math.round((b.spent / (b.amount || 1)) * 100)}%</span></div>)}</div>
+    </>}
+
+    {tab === "purchase" && <>
+      <form className="compact-form" onSubmit={async (event) => { event.preventDefault(); if (await post("/purchase-requests", { item: prForm.item, amount: Number(prForm.amount), justification: prForm.justification }, "Purchase request drafted")) { setPrForm({ item: "", amount: "", justification: "" }); void load(); } }}>
+        <p className="eyebrow">Purchase request</p>
+        <div className="form-grid">
+          <input placeholder="Item" value={prForm.item} onChange={(e) => setPrForm({ ...prForm, item: e.target.value })} required />
+          <input placeholder="Amount" inputMode="decimal" value={prForm.amount} onChange={(e) => setPrForm({ ...prForm, amount: e.target.value.replace(/[^0-9.]/g, "") })} required />
+          <input placeholder="Justification" value={prForm.justification} onChange={(e) => setPrForm({ ...prForm, justification: e.target.value })} />
+          <button className="primary-button" type="submit">Draft</button>
+        </div>
+      </form>
+      <div className="record-list">{purchases.map((pr) => <div className="record-row" key={pr.id}><span className="record-avatar"><Wallet size={15} /></span><span className="record-copy"><strong>{pr.item} · {money(pr.amount, pr.currency)}</strong><small>by {pr.requester_name}{pr.approval_status ? ` · approval: ${pr.approval_status.replace("_", " ")}` : ""}</small></span><span className="status-pill">{pr.status}</span>{pr.status === "draft" && <span className="record-actions"><button className="text-button" type="button" onClick={() => void post(`/purchase-requests/${pr.id}/submit`, {}, "Submitted").then((ok) => { if (ok) void load(); })}>Submit</button></span>}</div>)}</div>
+    </>}
+
+    {tab === "overview" && !overview && <p className="lede">Loading finance overview…</p>}
   </section>;
 }
 
@@ -2171,51 +2429,6 @@ function ITView() {
     <form className="task-composer workflow-composer" onSubmit={async (e) => { e.preventDefault(); if (await post("/itops/kb", kbForm, "Article published")) setKbForm({ title: "", body: "", category: "general" }); }}><input placeholder="Article title" value={kbForm.title} onChange={(e) => setKbForm({ ...kbForm, title: e.target.value })} required /><input placeholder="Body" value={kbForm.body} onChange={(e) => setKbForm({ ...kbForm, body: e.target.value })} /><button className="primary-button" type="submit">Publish</button></form>
     <div className="record-list">{articles.map((a) => <div className="record-row" key={a.id}><span className="record-avatar department-avatar">KB</span><span className="record-copy"><strong>{a.title}</strong><small>{a.category}{a.author_name ? ` · ${a.author_name}` : ""}</small></span></div>)}</div>
   </section>;
-}
-
-function FinanceExtras() {
-  const [invoices, setInvoices] = useState<Array<{ id: string; number: string; customer_name: string; amount: number; currency: string; status: string }>>([]);
-  const [budgets, setBudgets] = useState<Array<{ id: string; name: string; amount: number; currency: string; period_start: string; period_end: string; spent: number }>>([]);
-  const [purchases, setPurchases] = useState<Array<{ id: string; item: string; amount: number; currency: string; status: string; requester_name: string; approval_status: string }>>([]);
-  const [invoiceForm, setInvoiceForm] = useState({ number: "", customer_name: "", amount: "" });
-  const [budgetForm, setBudgetForm] = useState({ name: "", amount: "", period_start: "", period_end: "" });
-  const [prForm, setPrForm] = useState({ item: "", amount: "", justification: "" });
-  const [message, setMessage] = useState("");
-
-  const load = async () => {
-    const [inv, bud, pur] = await Promise.all([
-      fetch(`${apiBase}/invoices`, { credentials: "include" }),
-      fetch(`${apiBase}/budgets`, { credentials: "include" }),
-      fetch(`${apiBase}/purchase-requests`, { credentials: "include" }),
-    ]);
-    if (inv.ok) setInvoices(await inv.json());
-    if (bud.ok) setBudgets(await bud.json());
-    if (pur.ok) setPurchases(await pur.json());
-  };
-  useEffect(() => { void load(); }, []);
-
-  const post = async (url: string, body: unknown, ok: string) => {
-    const response = await fetch(`${apiBase}${url}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    setMessage(response.ok ? ok : ((await response.json()).error?.message ?? "Action failed"));
-    await load();
-    return response.ok;
-  };
-  const money = (amount: number, currency: string) => `${currency} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
-
-  return <>
-    {message && <p className="inline-message">{message}</p>}
-    <div className="section-heading task-heading"><div><p className="eyebrow">Invoices</p><h2>{invoices.length}</h2></div></div>
-    <form className="task-composer workflow-composer" onSubmit={async (event) => { event.preventDefault(); if (await post("/invoices", { number: invoiceForm.number, customer_name: invoiceForm.customer_name, amount: Number(invoiceForm.amount) }, "Invoice created")) setInvoiceForm({ number: "", customer_name: "", amount: "" }); }}><input placeholder="Invoice #" value={invoiceForm.number} onChange={(e) => setInvoiceForm({ ...invoiceForm, number: e.target.value })} required /><input placeholder="Customer" value={invoiceForm.customer_name} onChange={(e) => setInvoiceForm({ ...invoiceForm, customer_name: e.target.value })} required /><input placeholder="Amount" inputMode="decimal" value={invoiceForm.amount} onChange={(e) => setInvoiceForm({ ...invoiceForm, amount: e.target.value.replace(/[^0-9.]/g, "") })} required /><button className="primary-button" type="submit">Add</button></form>
-    <div className="record-list">{invoices.map((inv) => <div className="record-row" key={inv.id}><span className="record-avatar department-avatar">#</span><span className="record-copy"><strong>{inv.number} · {money(inv.amount, inv.currency)}</strong><small>{inv.customer_name}</small></span><span className="status-pill">{inv.status}</span>{inv.status !== "paid" && <span className="record-actions"><button className="text-button" type="button" onClick={() => void post("/invoices/status", { id: inv.id, status: "paid" }, "Marked paid")}>Mark paid</button></span>}</div>)}</div>
-
-    <div className="section-heading task-heading"><div><p className="eyebrow">Purchase requests</p><h2>{purchases.length}</h2></div></div>
-    <form className="task-composer workflow-composer" onSubmit={async (event) => { event.preventDefault(); if (await post("/purchase-requests", { item: prForm.item, amount: Number(prForm.amount), justification: prForm.justification }, "Purchase request drafted")) setPrForm({ item: "", amount: "", justification: "" }); }}><input placeholder="Item" value={prForm.item} onChange={(e) => setPrForm({ ...prForm, item: e.target.value })} required /><input placeholder="Amount" inputMode="decimal" value={prForm.amount} onChange={(e) => setPrForm({ ...prForm, amount: e.target.value.replace(/[^0-9.]/g, "") })} required /><input placeholder="Justification" value={prForm.justification} onChange={(e) => setPrForm({ ...prForm, justification: e.target.value })} /><button className="primary-button" type="submit">Draft</button></form>
-    <div className="record-list">{purchases.map((pr) => <div className="record-row" key={pr.id}><span className="record-avatar"><Wallet size={15} /></span><span className="record-copy"><strong>{pr.item} · {money(pr.amount, pr.currency)}</strong><small>by {pr.requester_name}{pr.approval_status ? ` · approval: ${pr.approval_status.replace("_", " ")}` : ""}</small></span><span className="status-pill">{pr.status}</span>{pr.status === "draft" && <span className="record-actions"><button className="text-button" type="button" onClick={() => void post(`/purchase-requests/${pr.id}/submit`, {}, "Submitted for approval")}>Submit</button></span>}</div>)}</div>
-
-    <div className="section-heading task-heading"><div><p className="eyebrow">Budgets</p><h2>{budgets.length}</h2></div></div>
-    <form className="task-composer" onSubmit={async (event) => { event.preventDefault(); if (await post("/budgets", { name: budgetForm.name, amount: Number(budgetForm.amount), period_start: budgetForm.period_start, period_end: budgetForm.period_end }, "Budget created")) setBudgetForm({ name: "", amount: "", period_start: "", period_end: "" }); }}><input placeholder="Budget name" value={budgetForm.name} onChange={(e) => setBudgetForm({ ...budgetForm, name: e.target.value })} required /><input placeholder="Amount" inputMode="decimal" value={budgetForm.amount} onChange={(e) => setBudgetForm({ ...budgetForm, amount: e.target.value.replace(/[^0-9.]/g, "") })} required /><DatePicker value={budgetForm.period_start} onChange={(value) => setBudgetForm({ ...budgetForm, period_start: value })} placeholder="Period start" ariaLabel="Period start" /><DatePicker value={budgetForm.period_end} onChange={(value) => setBudgetForm({ ...budgetForm, period_end: value })} placeholder="Period end" ariaLabel="Period end" /><button className="primary-button" type="submit">Add</button></form>
-    <div className="record-list">{budgets.map((b) => <div className="record-row" key={b.id}><span className="record-avatar department-avatar">$</span><span className="record-copy"><strong>{b.name} · {money(b.amount, b.currency)}</strong><small>{b.period_start} → {b.period_end} · spent {money(b.spent, b.currency)}</small></span><span className={`status-pill ${b.spent > b.amount ? "leave-rejected" : ""}`}>{Math.round((b.spent / (b.amount || 1)) * 100)}%</span></div>)}</div>
-  </>;
 }
 
 function NotificationBell() {
