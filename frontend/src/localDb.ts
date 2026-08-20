@@ -207,6 +207,61 @@ export async function retryOperation(id: string) {
   await db.execute(`UPDATE sync_outbox SET status = 'pending' WHERE id = $1`, [id]);
 }
 
+type RemoteOperation = { id: string; entity: string; action: string; payload: Record<string, unknown>; created_at: string };
+
+// pullRemoteChanges consumes the server change feed and writes it into the
+// local SQLite caches so a device that later goes offline still sees changes
+// that other clients synced. PostgreSQL remains authoritative; this only keeps
+// the read-side caches current.
+export async function pullRemoteChanges(apiBase: string) {
+  const response = await fetch(`${apiBase}/sync/pull`, { credentials: "include" });
+  if (!response.ok) throw new Error("pull failed");
+  const result = (await response.json()) as { operations: RemoteOperation[] };
+  const operations = result.operations ?? [];
+  const tasks: LocalTask[] = [];
+  const leave: LocalLeave[] = [];
+  const shifts: LocalShift[] = [];
+  const db = await localDb();
+  for (const operation of operations) {
+    const payload = operation.payload ?? {};
+    const value = <T,>(key: string) => payload[key] as T;
+    if (operation.entity === "task" && value<string>("id")) {
+      tasks.push({
+        id: value<string>("id"),
+        title: value<string>("title") ?? "",
+        description: value<string>("description") ?? "",
+        status: value<string>("status") ?? "todo",
+        priority: value<string>("priority") ?? "normal",
+        dueAt: value<string | null>("due_at") ?? null,
+        assignedTo: value<string | null>("assigned_to") ?? null,
+        recurrenceRule: value<string | null>("recurrence_rule") ?? null,
+        recurrenceNextAt: value<string | null>("recurrence_next_at") ?? null,
+        createdAt: operation.created_at,
+        updatedAt: operation.created_at,
+      });
+    } else if (operation.entity === "leave" && value<string>("id")) {
+      leave.push({ id: value<string>("id"), requested_by: "remote", leave_type: value<string>("leave_type") ?? "annual", start_date: value<string>("start_date") ?? "", end_date: value<string>("end_date") ?? "", reason: value<string>("reason") ?? "", status: "pending" });
+    } else if (operation.entity === "shift" && value<string>("id")) {
+      shifts.push({ id: value<string>("id"), assigned_to: value<string>("assigned_to") ?? "remote", title: value<string>("title") ?? "", shift_date: value<string>("shift_date") ?? "", starts_at: value<string>("starts_at") ?? "", ends_at: value<string>("ends_at") ?? "", status: "scheduled", note: value<string>("note") ?? "" });
+    } else if (operation.entity === "attendance" && value<string>("id")) {
+      // Check-in and check-out arrive as separate operations for the same
+      // record, so update only the column this operation carries.
+      const column = operation.action === "check_out" ? "check_out_at" : "check_in_at";
+      const at = value<string | null>("at") ?? null;
+      await db.execute(
+        `INSERT INTO local_attendance (id, user_id, work_date, check_in_at, check_out_at, status, note)
+         VALUES ($1, 'remote', $2, $3, $4, 'present', $5)
+         ON CONFLICT(id) DO UPDATE SET ${column}=$6, note=excluded.note`,
+        [value<string>("id"), value<string>("work_date") ?? "", operation.action === "check_in" ? at : null, operation.action === "check_out" ? at : null, value<string>("note") ?? "", at],
+      );
+    }
+  }
+  if (tasks.length) await cacheTasks(tasks);
+  if (leave.length) await cacheLeave(leave);
+  if (shifts.length) await cacheShifts(shifts);
+  return { applied: operations.length };
+}
+
 export async function syncPendingOperations(apiBase: string) {
   const operations = await getPendingOperations();
   if (!operations.length) return { synced: 0 };

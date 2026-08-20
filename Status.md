@@ -140,6 +140,9 @@ Completed in this milestone:
 - Approvals UI added: reviewer inbox, request submission, workflow builder, and per-request approval history
 - Fixed CORS `Access-Control-Allow-Methods` to include POST and PATCH so browser-preflighted mutations succeed
 - Declared the `@tauri-apps/plugin-sql` frontend dependency so the production build type-checks and offline SQLite bindings resolve
+- Bundled Plus Jakarta Sans locally via `@fontsource` instead of the Google Fonts CDN so typography survives a fully offline installation
+- Reworked responsive layout: removed the `min-width: 1080px` contradiction and added tablet (1080px) and phone (720px) breakpoints that stack the sidebar and collapse every multi-column grid
+- Frontend now consumes the `sync/pull` change feed (`pullRemoteChanges`) after login and workspace load, writing tasks, leave, shifts, and attendance into the local SQLite caches so a device keeps other clients' synced changes when it later goes offline
 
 Next actions:
 
@@ -149,9 +152,8 @@ Next actions:
 4. Add export audit hooks when reporting/export services are introduced.
 5. Wire existing modules (leave, future finance) through the generic workflow engine instead of module-local approve/reject.
 6. Add workflow approval reminders/deadlines and delegated approval.
-7. Bundle Plus Jakarta Sans locally instead of the Google Fonts CDN import so typography survives true offline use.
-8. Resolve the responsive contradiction (`body { min-width: 1080px }` vs. the mobile media query) and add `prefers-reduced-motion` support to meet the design-system accessibility rules.
-9. Consume the `sync/pull` change feed and add delete tombstones so device-offline clients receive other clients' changes.
+7. Add delete tombstones so device-offline clients also receive deletions through the pull feed (pull now applies creates/updates only).
+8. Add a cross-device attendance merge keyed on work date (pull currently upserts attendance by record id).
 
 ## Active Work
 

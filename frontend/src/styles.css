@@ -1,4 +1,5 @@
-@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap");
+/* Plus Jakarta Sans is bundled locally via @fontsource (imported in main.tsx)
+   so typography works in a fully offline installation. */
 
 :root {
   font-family: "Plus Jakarta Sans", sans-serif;
@@ -34,7 +35,7 @@
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 1080px; background: var(--background); color: var(--text); }
+body { margin: 0; min-width: 320px; background: var(--background); color: var(--text); }
 button { font: inherit; color: inherit; }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
@@ -81,4 +82,42 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .workflow-actions { display: flex; align-items: center; gap: 12px; margin-top: 16px; flex-wrap: wrap; }.workflow-actions input { flex: 1; min-width: 220px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); padding: 10px 12px; font: inherit; font-size: 11px; }.workflow-actions input:focus { border-color: var(--accent); outline: none; }
 .workflow-step-row { display: grid; grid-template-columns: 1.4fr 1.4fr .7fr .8fr .8fr auto; gap: 8px; align-items: center; margin-bottom: 10px; }.workflow-step-row input { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); padding: 10px 11px; font: inherit; font-size: 11px; }.workflow-step-row input:focus { border-color: var(--accent); outline: none; }
 
-@media (max-width: 900px) { body { min-width: 0; }.sidebar { width: 210px; }.topbar { padding: 0 28px; }.content-wrap { padding-left: 28px; padding-right: 28px; }.metric-row { padding-right: 15px; }.metric-row + .metric-row { padding-left: 15px; } }
+/* Tablet: tighten the shell and let the two-column people grid stack. */
+@media (max-width: 1080px) {
+  .content-wrap { padding: 48px 32px 96px; }
+  .people-grid { grid-template-columns: 1fr; gap: 32px; }
+  .task-composer, .workflow-composer { grid-template-columns: 1fr 1fr; }
+  .workflow-step-row { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 900px) {
+  .sidebar { width: 210px; }
+  .topbar { padding: 0 24px; }
+  .content-wrap { padding-left: 24px; padding-right: 24px; }
+  .metric-row { padding-right: 15px; }
+  .metric-row + .metric-row { padding-left: 15px; }
+}
+
+/* Phone: fold the sidebar into a horizontal top strip and collapse every
+   multi-column grid to a single column so nothing overflows the viewport. */
+@media (max-width: 720px) {
+  .app-shell { flex-direction: column; }
+  .sidebar { width: 100%; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 4px; padding: 12px 16px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .brand-mark { margin: 0 8px 0 0; }
+  .workspace-switcher { margin-bottom: 0; }
+  .primary-nav { grid-auto-flow: column; grid-template-columns: none; display: flex; flex-wrap: wrap; gap: 4px; width: 100%; order: 3; overflow-x: auto; }
+  .primary-nav .eyebrow { display: none; }
+  .nav-item { padding: 8px 10px; }
+  .sidebar-footer { display: none; }
+  .topbar { height: auto; padding: 14px 18px; flex-wrap: wrap; gap: 8px; }
+  .content-wrap { padding: 36px 18px 80px; }
+  .page-heading, .section-heading { flex-direction: column; align-items: flex-start; gap: 16px; }
+  .page-heading h1 { font-size: 27px; }
+  .metric-grid { grid-template-columns: 1fr; margin: 40px 0 48px; }
+  .metric-row { border-right: 0; border-bottom: 1px solid var(--line); padding: 20px 0; }
+  .metric-row + .metric-row { padding-left: 0; }
+  .metric-row:last-child { border-bottom: 0; }
+  .form-grid, .permission-grid, .task-composer, .workflow-composer, .workflow-step-row { grid-template-columns: 1fr; }
+  .attendance-today, .connection-strip { flex-direction: column; align-items: flex-start; gap: 14px; }
+  .theme-switcher { right: 16px; bottom: 16px; }
+}

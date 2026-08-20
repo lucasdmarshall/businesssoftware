@@ -16,7 +16,7 @@ import {
   Sun,
   UsersRound,
 } from "lucide-react";
-import { cacheAttendance, cacheLeave, cacheSession, cacheShifts, cacheTasks, discardOperation, getCachedSession, getLocalAttendance, getLocalLeave, getLocalShifts, getLocalTasks, getOutboxStatuses, initializeLocalDb, queueOperation, retryOperation, syncPendingOperations, type LocalAttendance, type LocalLeave, type LocalShift, type LocalTask } from "./localDb";
+import { cacheAttendance, cacheLeave, cacheSession, cacheShifts, cacheTasks, discardOperation, getCachedSession, getLocalAttendance, getLocalLeave, getLocalShifts, getLocalTasks, getOutboxStatuses, initializeLocalDb, pullRemoteChanges, queueOperation, retryOperation, syncPendingOperations, type LocalAttendance, type LocalLeave, type LocalShift, type LocalTask } from "./localDb";
 
 type Theme = "light" | "dark";
 type SystemHealth = { status: string; database: string };
@@ -87,6 +87,14 @@ function App() {
         if (meResponse.ok) {
           setCurrentUser(await meResponse.json());
           setAuthState("authenticated");
+          // Bring the local read caches up to date with other clients' synced
+          // changes so this device keeps working if it later goes offline.
+          try {
+            await syncPendingOperations(apiBase);
+            await pullRemoteChanges(apiBase);
+          } catch {
+            // Running outside Tauri (no local SQLite) or a transient error.
+          }
         } else {
           setAuthState("login");
         }
@@ -119,6 +127,7 @@ function App() {
     try {
       await cacheSession({ email: user.email, displayName: user.name, organization: user.organization, role: user.role, permissions: user.permissions ?? [], cachedAt: new Date().toISOString() });
       await syncPendingOperations(apiBase);
+      await pullRemoteChanges(apiBase);
     } catch {
       // Keep online auth working when running the frontend outside Tauri or offline.
     }

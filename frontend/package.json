@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/plus-jakarta-sans": "^5.1.0",
     "@tauri-apps/plugin-sql": "^2.2.0",
     "@vitejs/plugin-react": "latest",
     "lucide-react": "latest",
