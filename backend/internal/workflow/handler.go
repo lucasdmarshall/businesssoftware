@@ -475,7 +475,6 @@ func (h Handler) decide(w http.ResponseWriter, r *http.Request, decision string)
 	writeJSON(w, http.StatusOK, map[string]string{"status": outcome})
 }
 
-
 type resubmitRequest struct {
 	Reason string `json:"reason"`
 }
@@ -629,7 +628,6 @@ func (h Handler) Instance(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, item)
 }
-
 
 // SetDue lets the submitter or a workflow manager override the instance deadline.
 func (h Handler) SetDue(w http.ResponseWriter, r *http.Request) {
