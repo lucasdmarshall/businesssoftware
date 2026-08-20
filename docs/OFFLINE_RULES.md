@@ -50,8 +50,15 @@ local cache and outbox for device-offline mode.
 
 ### Leave and shifts
 
-- Offline-capable: submitting a request or a shift entry (queued).
-- Approvals and rejections are **not** offline actions (see below).
+- Offline-capable: submitting a leave request or a shift entry (queued).
+- On sync, leave creates re-validate date range and overlap; insufficient
+  balance or overlapping leave fails the outbox item rather than bypassing
+  server rules.
+- Approvals, rejections, cancellations of approved leave, balance edits, and
+  policy changes are **not** offline actions (see below).
+- When leave is approved on the server, attendance rows for those dates are
+  marked `leave` and a calendar event is created — those side effects only run
+  server-side.
 
 ## Server-authoritative actions (never offline)
 
@@ -60,6 +67,7 @@ These require the company server and are never applied from the local queue:
 - Permission and role changes
 - Final finance approvals and payroll confirmation
 - Leave and workflow **approval / rejection** decisions
+- Leave balance and policy changes; cancelling already-approved leave
 - User deletion, offboarding, and access revocation
 - MFA enable/disable and password changes
 - Any company-wide destructive action

@@ -141,7 +141,22 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Add attendance screen with recent history
 - [x] Add manager attendance views
 - [x] Add attendance correction workflow
-- [ ] Add shifts, leave, corrections history, and payroll rules
+- [ ] Add shifts depth, corrections history UI polish, and payroll rules
+
+### Leave (first production-ready business module)
+
+- [x] Leave request create / list / approve / reject
+- [x] Offline leave request queue (approvals remain server-authoritative)
+- [x] Leave balances (entitled, used, carried, pending, remaining)
+- [x] Org leave policies and seed-from-policy entitlements
+- [x] Inclusive day count + half-day (single day)
+- [x] Overlap prevention for pending/approved ranges
+- [x] Balance enforcement on submit and approve
+- [x] Cancel pending (self) / cancel approved (manager, restores balance)
+- [x] Approval side effects: attendance `leave` days + calendar event
+- [x] Optional workflow routing when a `leave` definition exists
+- [x] Notifications on approve / reject / manager cancel
+- [x] Leave UI filters (all / mine / pending) using custom Dropdown/DatePicker
 
 ## Phase 5 — Workflow Engine
 

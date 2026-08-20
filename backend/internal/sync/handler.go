@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"name/backend/internal/auth"
+	"name/backend/internal/leave"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -177,6 +178,7 @@ type leavePayload struct {
 	StartDate string `json:"start_date"`
 	EndDate   string `json:"end_date"`
 	Reason    string `json:"reason"`
+	HalfDay   bool   `json:"half_day"`
 }
 
 func applyLeave(tx pgx.Tx, organizationID, userID string, operation Operation) error {
@@ -193,7 +195,25 @@ func applyLeave(tx pgx.Tx, organizationID, userID string, operation Operation) e
 	if payload.StartDate == "" || payload.EndDate == "" {
 		return fmt.Errorf("leave dates are required")
 	}
-	_, err := tx.Exec(context.Background(), `INSERT INTO leave_requests (id, organization_id, requested_by, leave_type, start_date, end_date, reason) VALUES (COALESCE(NULLIF($1, '')::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7)`, payload.ID, organizationID, userID, payload.LeaveType, payload.StartDate, payload.EndDate, payload.Reason)
+	days := leave.RequestDays(payload.StartDate, payload.EndDate, payload.HalfDay)
+	if days <= 0 {
+		return fmt.Errorf("invalid leave date range")
+	}
+	var conflict int
+	if err := tx.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM leave_requests
+		WHERE organization_id=$1 AND requested_by=$2 AND status IN ('pending','approved')
+		  AND start_date <= $4::date AND end_date >= $3::date`,
+		organizationID, userID, payload.StartDate, payload.EndDate).Scan(&conflict); err != nil {
+		return err
+	}
+	if conflict > 0 {
+		return fmt.Errorf("overlapping leave request")
+	}
+	_, err := tx.Exec(context.Background(), `
+		INSERT INTO leave_requests (id, organization_id, requested_by, leave_type, start_date, end_date, total_days, half_day, reason)
+		VALUES (COALESCE(NULLIF($1, '')::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7, $8, $9)`,
+		payload.ID, organizationID, userID, payload.LeaveType, payload.StartDate, payload.EndDate, days, payload.HalfDay, payload.Reason)
 	return err
 }
 

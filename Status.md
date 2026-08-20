@@ -165,15 +165,15 @@ Completed in this milestone:
 - Phase 8 analytics and executive control: spending/attendance/sales summary APIs (`analytics.read`), saved report definitions and schedules (migration `021_analytics_reports.sql`), JSON export with `report.exported` audit events, and a schedule worker that advances due runs and notifies creators
 - Reports UI covers period summaries, save/export custom reports, and schedule cadence; Overview surfaces 30-day spending and attendance metrics alongside the existing KPI dashboard
 - Sales summary returns a stable placeholder (`module_available: false`) until the CRM module lands
+- **Leave chosen as first production-depth module:** balances, policies, half-days, overlap checks, cancel flows, attendance + calendar side effects on approve, optional `leave` workflow routing, and a rebuilt Leave UI (migration `027_leave_production.sql`)
+- Design system now documents required custom **Dropdown / DatePicker / TimePicker** controls in `Design.md` and `Language-and-Design-System.md`
 
 Next actions:
 
-1. HR depth: employee profiles, onboarding/offboarding checklists, HR documents.
-2. Sales/CRM module to fill the reserved sales summary shape.
-3. IT/Ops tickets, assets, and service requests.
-4. Phase 9 packaging, licensing, and installer architecture.
-5. Workflow approval reminders/deadlines and delegated approval (if not already on other branches).
-6. Leave balance, correction history, and payroll rules (if not already on other branches).
+1. Pick the next module for production depth (Attendance polish, Finance expenses, or CRM pipeline).
+2. Workflow approval reminders/deadlines and delegated approval.
+3. Phase 9 packaging, licensing, and installer architecture.
+4. Sales/CRM and IT/Ops remain scaffold-level until scheduled for depth.
 
 ## Active Work
 

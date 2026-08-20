@@ -137,6 +137,12 @@ func main() {
 	mux.Handle("POST /api/v1/leave", authHandler.RequirePermission("leave.read", http.HandlerFunc(leaveHandler.Create)))
 	mux.Handle("POST /api/v1/leave/approve", authHandler.RequirePermission("leave.manage", http.HandlerFunc(leaveHandler.Decide)))
 	mux.Handle("POST /api/v1/leave/reject", authHandler.RequirePermission("leave.manage", http.HandlerFunc(leaveHandler.Decide)))
+	mux.Handle("POST /api/v1/leave/cancel", authHandler.RequirePermission("leave.read", http.HandlerFunc(leaveHandler.Cancel)))
+	mux.Handle("GET /api/v1/leave/balances", authHandler.RequirePermission("leave.read", http.HandlerFunc(leaveHandler.Balances)))
+	mux.Handle("POST /api/v1/leave/balances", authHandler.RequirePermission("leave.manage", http.HandlerFunc(leaveHandler.Balances)))
+	mux.Handle("POST /api/v1/leave/balances/ensure", authHandler.RequirePermission("leave.manage", http.HandlerFunc(leaveHandler.EnsureYearBalances)))
+	mux.Handle("GET /api/v1/leave/policies", authHandler.RequirePermission("leave.read", http.HandlerFunc(leaveHandler.Policies)))
+	mux.Handle("POST /api/v1/leave/policies", authHandler.RequirePermission("leave.manage", http.HandlerFunc(leaveHandler.Policies)))
 	shiftHandler := shifts.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/shifts", authHandler.RequirePermission("shifts.read", http.HandlerFunc(shiftHandler.List)))
 	mux.Handle("POST /api/v1/shifts", authHandler.RequirePermission("shifts.manage", http.HandlerFunc(shiftHandler.Create)))

@@ -212,6 +212,13 @@ The initial component system should include:
 - Activity timeline
 - Approval stepper
 
+### Custom selects and date/time (implemented)
+
+Do **not** use native `<select>` or `<input type="date|time">` in product screens.
+The app ships custom **Dropdown**, **DatePicker**, and **TimePicker** controls
+(see [`Design.md`](./Design.md)) so theming, keyboard access, and lookup-driven
+option lists stay consistent. New modules must reuse these controls.
+
 Components must support both themes, keyboard navigation, responsive layouts, and permission-aware visibility.
 
 ## Accessibility

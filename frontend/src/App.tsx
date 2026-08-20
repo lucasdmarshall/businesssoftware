@@ -37,7 +37,9 @@ type AuthState = "loading" | "setup" | "login" | "authenticated";
 type CurrentUser = { name: string; email: string; organization: string; role: string; permissions?: string[] };
 type UserRecord = { id: string; email: string; display_name: string; status: string };
 type DepartmentRecord = { id: string; name: string; slug: string };
-type LeaveRequest = { id: string; requested_by: string; display_name?: string; leave_type: string; start_date: string; end_date: string; reason: string; status: string };
+type LeaveRequest = { id: string; requested_by: string; display_name?: string; leave_type: string; start_date: string; end_date: string; total_days?: number; half_day?: boolean; reason: string; status: string; workflow_instance_id?: string };
+type LeaveBalance = { id: string; user_id: string; display_name?: string; leave_type: string; year: number; entitled_days: number; used_days: number; carried_over_days: number; pending_days: number; remaining_days: number };
+type LeavePolicy = { id: string; leave_type: string; entitled_days: number; allow_half_day: boolean; requires_balance: boolean; active: boolean };
 type RoleRecord = { id: string; code: string; name: string; permissions: string[] };
 type PermissionRecord = { code: string; description: string };
 type AuditEntry = { id: string; action: string; entity_type: string; entity_id: string; actor_name: string; created_at: string };
@@ -387,7 +389,7 @@ function App() {
           </div>
         </header>
 
-        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "projects" ? <ProjectsView /> : activeView === "approvals" ? <WorkflowView /> : activeView === "finance" ? <FinanceView /> : activeView === "hr" ? <HRView /> : activeView === "sales" ? <SalesView /> : activeView === "it" ? <ITView /> : activeView === "reports" ? <ReportsView /> : activeView === "calendar" ? <CalendarView /> : activeView === "attendance" ? <AttendanceView /> : activeView === "leave" ? <LeaveView /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : activeView === "settings" ? <SettingsView /> : <section className="content-wrap">
+        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "projects" ? <ProjectsView /> : activeView === "approvals" ? <WorkflowView /> : activeView === "finance" ? <FinanceView /> : activeView === "hr" ? <HRView /> : activeView === "sales" ? <SalesView /> : activeView === "it" ? <ITView /> : activeView === "reports" ? <ReportsView /> : activeView === "calendar" ? <CalendarView /> : activeView === "attendance" ? <AttendanceView /> : activeView === "leave" ? <LeaveView canManage={Boolean(currentUser?.permissions?.includes("leave.manage"))} currentEmail={currentUser?.email ?? ""} /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : activeView === "settings" ? <SettingsView /> : <section className="content-wrap">
           <div className="page-heading">
             <div>
               <p className="eyebrow">Wednesday, 20 August 2026</p>
@@ -584,18 +586,246 @@ function AttendanceView() {
   return <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">Attendance</p><h1>Be present, clearly.</h1><p className="lede">Check-in and check-out remain available when the company server is offline.</p></div></div>{message && <p className="inline-message">{message}</p>}<div className="attendance-today"><div><p className="eyebrow">Today · {today}</p><h2>{todayRecord?.check_in_at ? todayRecord.check_out_at ? "Workday complete" : "Currently working" : "Not checked in"}</h2></div><div className="attendance-actions"><button className="primary-button" type="button" onClick={() => void mark("check_in")} disabled={Boolean(todayRecord?.check_in_at)}>Check in</button><button className="text-button" type="button" onClick={() => void mark("check_out")} disabled={!todayRecord?.check_in_at || Boolean(todayRecord.check_out_at)}>Check out</button></div></div><div className="section-heading task-heading"><div><p className="eyebrow">History</p><h2>Recent attendance</h2></div></div><div className="record-list">{records.map((record) => <div className="record-row" key={record.id}><span className="record-avatar"><Clock3 size={15} /></span><span className="record-copy"><strong>{record.work_date}</strong><small>{record.check_in_at ? new Date(record.check_in_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"} → {record.check_out_at ? new Date(record.check_out_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</small></span><span className="status-pill">{record.status}</span></div>)}</div>{managerRecords.length > 0 && <><div className="section-heading task-heading"><div><p className="eyebrow">Manager view</p><h2>Team attendance</h2></div></div><div className="record-list">{managerRecords.map((record) => <div className="record-row" key={record.id}><span className="record-avatar"><UsersRound size={15} /></span><span className="record-copy"><strong>{record.display_name}</strong><small>{record.work_date} · {record.check_in_at ? new Date(record.check_in_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"} → {record.check_out_at ? new Date(record.check_out_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</small></span><span className="status-pill">{record.status}</span></div>)}</div><form className="compact-form attendance-correction" onSubmit={submitCorrection}><p className="eyebrow">Correction</p><Dropdown value={correction.user_id} options={[{ value: "", label: "Select person" }, ...users.map((user) => ({ value: user.id, label: user.display_name }))]} onChange={(value) => setCorrection({ ...correction, user_id: value })} ariaLabel="Person" placeholder="Select person" /><DatePicker value={correction.work_date} onChange={(value) => setCorrection({ ...correction, work_date: value })} ariaLabel="Work date" /><div className="form-grid"><TimePicker value={correction.check_in_at} onChange={(value) => setCorrection({ ...correction, check_in_at: value })} ariaLabel="Check in" /><TimePicker value={correction.check_out_at} onChange={(value) => setCorrection({ ...correction, check_out_at: value })} ariaLabel="Check out" /><input placeholder="Reason or note" value={correction.note} onChange={(event) => setCorrection({ ...correction, note: event.target.value })} /></div><button className="primary-button" type="submit">Save correction</button></form></>}</section>;
 }
 
-function LeaveView() {
+function inclusiveLeaveDays(start: string, end: string) {
+  if (!start || !end) return 0;
+  const a = new Date(`${start}T00:00:00Z`).getTime();
+  const b = new Date(`${end}T00:00:00Z`).getTime();
+  if (Number.isNaN(a) || Number.isNaN(b) || b < a) return 0;
+  return Math.floor((b - a) / 86400000) + 1;
+}
+
+function LeaveView({ canManage, currentEmail }: { canManage: boolean; currentEmail: string }) {
   const [requests, setRequests] = useState<Array<LeaveRequest & LocalLeave>>([]);
-  const [form, setForm] = useState({ leave_type: "annual", start_date: new Date().toISOString().slice(0, 10), end_date: new Date().toISOString().slice(0, 10), reason: "" });
+  const [balances, setBalances] = useState<LeaveBalance[]>([]);
+  const [policies, setPolicies] = useState<LeavePolicy[]>([]);
+  const [users, setUsers] = useState<UserRecord[]>([]);
+  const [me, setMe] = useState<{ id: string; email: string } | null>(null);
+  const [filter, setFilter] = useState<"all" | "mine" | "pending">("all");
+  const [form, setForm] = useState({ leave_type: "annual", start_date: new Date().toISOString().slice(0, 10), end_date: new Date().toISOString().slice(0, 10), reason: "", half_day: false });
+  const [balanceForm, setBalanceForm] = useState({ user_id: "", leave_type: "annual", entitled_days: "20", carried_over_days: "0" });
+  const [policyForm, setPolicyForm] = useState({ leave_type: "annual", entitled_days: "20", allow_half_day: true, requires_balance: true });
   const [message, setMessage] = useState("");
   const leaveTypes = useLookup("leave_type");
   const labelFor = (value: string) => leaveTypes.find((option) => option.value === value)?.label ?? value;
   const colorFor = (value: string) => leaveTypes.find((option) => option.value === value)?.color;
-  const load = async () => { try { await syncPendingOperations(apiBase); const response = await fetch(`${apiBase}/leave`, { credentials: "include" }); if (!response.ok) throw new Error("offline"); const remote = await response.json() as Array<LeaveRequest & LocalLeave>; setRequests(remote); await cacheLeave(remote); } catch { try { setRequests(await getLocalLeave() as Array<LeaveRequest & LocalLeave>); } catch { setRequests([]); } } };
-  useEffect(() => { void load(); const onOnline = () => void load(); window.addEventListener("online", onOnline); return () => window.removeEventListener("online", onOnline); }, []);
-  const createRequest = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const now = new Date().toISOString(); const local: LocalLeave = { id: crypto.randomUUID(), requested_by: "local", leave_type: form.leave_type, start_date: form.start_date, end_date: form.end_date, reason: form.reason, status: "pending" }; try { const response = await fetch(`${apiBase}/leave`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) }); if (!response.ok) throw new Error("offline"); const saved = await response.json() as LeaveRequest & LocalLeave; setRequests((current) => [saved, ...current]); await cacheLeave([saved]); setMessage("Leave request submitted"); } catch { await queueOperation({ id: `leave:${local.id}`, entity: "leave", action: "create", payload: local, createdAt: now }); await cacheLeave([local]); setRequests((current) => [local, ...current]); setMessage("Saved offline · will sync when the server is reachable"); } setForm((current) => ({ ...current, reason: "" })); };
-  const decide = async (id: string, action: "approve" | "reject") => { const response = await fetch(`${apiBase}/leave/${action}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }); setMessage(response.ok ? `Request ${action}d` : "You do not have permission to decide this request"); if (response.ok) void load(); };
-  return <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">Leave</p><h1>Plan time away.</h1><p className="lede">Requests stay visible to the team and move through a clear approval path.</p></div></div>{message && <p className="inline-message">{message}</p>}<form className="leave-form" onSubmit={createRequest}><p className="eyebrow">New request</p><div className="form-grid"><Dropdown value={form.leave_type} options={leaveTypes} onChange={(value) => setForm({ ...form, leave_type: value })} ariaLabel="Leave type" placeholder="Leave type" /><DatePicker value={form.start_date} onChange={(value) => setForm({ ...form, start_date: value })} ariaLabel="Start date" /><DatePicker value={form.end_date} onChange={(value) => setForm({ ...form, end_date: value })} ariaLabel="End date" /></div><input placeholder="Reason (optional)" value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} /><button className="primary-button" type="submit">Submit request</button></form><div className="section-heading task-heading"><div><p className="eyebrow">Requests</p><h2>{requests.length} requests</h2></div></div><div className="record-list">{requests.map((request) => <div className="record-row" key={request.id}><span className="record-avatar"><CalendarDays size={15} /></span><span className="record-copy"><strong>{request.display_name ?? "My request"} · <span className="leave-type-tag">{colorFor(request.leave_type) && <span className="dropdown-swatch" style={{ background: colorFor(request.leave_type) }} />}{labelFor(request.leave_type)}</span></strong><small>{request.start_date} → {request.end_date}{request.reason ? ` · ${request.reason}` : ""}</small></span><span className={`status-pill leave-${request.status}`}>{request.status}</span>{request.status === "pending" && <span className="task-actions"><button className="text-button" type="button" onClick={() => void decide(request.id, "approve")}>Approve</button><button className="text-button muted" type="button" onClick={() => void decide(request.id, "reject")}>Reject</button></span>}</div>)}</div></section>;
+  const previewDays = form.half_day && form.start_date === form.end_date ? 0.5 : inclusiveLeaveDays(form.start_date, form.end_date);
+
+  const load = async () => {
+    try {
+      await syncPendingOperations(apiBase);
+      const query = filter === "all" ? "" : `?filter=${filter}`;
+      const response = await fetch(`${apiBase}/leave${query}`, { credentials: "include" });
+      if (!response.ok) throw new Error("offline");
+      const remote = await response.json() as Array<LeaveRequest & LocalLeave>;
+      setRequests(remote);
+      await cacheLeave(remote);
+      const [balancesRes, policiesRes, usersRes, meRes] = await Promise.all([
+        fetch(`${apiBase}/leave/balances`, { credentials: "include" }),
+        fetch(`${apiBase}/leave/policies`, { credentials: "include" }),
+        canManage ? fetch(`${apiBase}/users`, { credentials: "include" }) : Promise.resolve(null),
+        fetch(`${apiBase}/auth/me`, { credentials: "include" }),
+      ]);
+      if (balancesRes.ok) setBalances(await balancesRes.json());
+      if (policiesRes.ok) setPolicies(await policiesRes.json());
+      if (usersRes?.ok) setUsers(await usersRes.json());
+      if (meRes.ok) {
+        const profile = await meRes.json() as { id?: string; email?: string };
+        setMe({ id: profile.id ?? "", email: profile.email ?? currentEmail });
+      }
+    } catch {
+      try { setRequests(await getLocalLeave() as Array<LeaveRequest & LocalLeave>); } catch { setRequests([]); }
+    }
+  };
+
+  useEffect(() => { void load(); const onOnline = () => void load(); window.addEventListener("online", onOnline); return () => window.removeEventListener("online", onOnline); }, [filter, canManage]);
+
+  const createRequest = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const now = new Date().toISOString();
+    const local: LocalLeave = { id: crypto.randomUUID(), requested_by: "local", leave_type: form.leave_type, start_date: form.start_date, end_date: form.end_date, reason: form.reason, status: "pending" };
+    try {
+      const response = await fetch(`${apiBase}/leave`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+        setMessage(body?.error?.message ?? "Could not submit leave request");
+        return;
+      }
+      const saved = await response.json() as LeaveRequest & LocalLeave;
+      setRequests((current) => [saved, ...current]);
+      await cacheLeave([saved]);
+      setMessage(`Leave submitted · ${saved.total_days ?? previewDays} day(s)`);
+      setForm((current) => ({ ...current, reason: "", half_day: false }));
+      void load();
+    } catch {
+      await queueOperation({ id: `leave:${local.id}`, entity: "leave", action: "create", payload: { ...local, half_day: form.half_day }, createdAt: now });
+      await cacheLeave([local]);
+      setRequests((current) => [local, ...current]);
+      setMessage("Saved offline · will sync when the server is reachable");
+    }
+  };
+
+  const decide = async (id: string, action: "approve" | "reject") => {
+    const response = await fetch(`${apiBase}/leave/${action}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+      setMessage(body?.error?.message ?? "You do not have permission to decide this request");
+      return;
+    }
+    setMessage(`Request ${action}d`);
+    void load();
+  };
+
+  const cancel = async (id: string) => {
+    const response = await fetch(`${apiBase}/leave/cancel`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+      setMessage(body?.error?.message ?? "Could not cancel leave");
+      return;
+    }
+    setMessage("Leave cancelled");
+    void load();
+  };
+
+  const saveBalance = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const response = await fetch(`${apiBase}/leave/balances`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: balanceForm.user_id, leave_type: balanceForm.leave_type, entitled_days: Number(balanceForm.entitled_days), carried_over_days: Number(balanceForm.carried_over_days) }),
+    });
+    setMessage(response.ok ? "Leave balance saved" : "Could not save leave balance");
+    if (response.ok) void load();
+  };
+
+  const savePolicy = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const response = await fetch(`${apiBase}/leave/policies`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        leave_type: policyForm.leave_type,
+        entitled_days: Number(policyForm.entitled_days),
+        allow_half_day: policyForm.allow_half_day,
+        requires_balance: policyForm.requires_balance,
+      }),
+    });
+    setMessage(response.ok ? "Leave policy saved" : "Could not save leave policy");
+    if (response.ok) void load();
+  };
+
+  const seedBalances = async () => {
+    if (!balanceForm.user_id) {
+      setMessage("Select a person first");
+      return;
+    }
+    const response = await fetch(`${apiBase}/leave/balances/ensure`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: balanceForm.user_id }),
+    });
+    setMessage(response.ok ? "Default balances seeded from policy" : "Could not seed balances");
+    if (response.ok) void load();
+  };
+
+  const myBalances = balances.filter((balance) => !me?.id || balance.user_id === me.id);
+
+  return <section className="content-wrap">
+    <div className="page-heading">
+      <div>
+        <p className="eyebrow">Leave</p>
+        <h1>Plan time away.</h1>
+        <p className="lede">Balances, overlap checks, half-days, approvals, and calendar/attendance updates when leave is approved.</p>
+      </div>
+      <div className="segmented" role="tablist" aria-label="Leave filter">
+        {(["all", "mine", "pending"] as const).map((value) => (
+          <button key={value} type="button" role="tab" className={`segmented-item ${filter === value ? "active" : ""}`} aria-selected={filter === value} onClick={() => setFilter(value)}>{value}</button>
+        ))}
+      </div>
+    </div>
+    {message && <p className="inline-message">{message}</p>}
+
+    {(myBalances.length > 0 || balances.length > 0) && <>
+      <div className="section-heading task-heading"><div><p className="eyebrow">Your balances</p><h2>{new Date().getFullYear()}</h2></div></div>
+      <div className="metric-grid">
+        {(myBalances.length > 0 ? myBalances : balances.slice(0, 4)).map((balance) => (
+          <Metric
+            key={balance.id}
+            label={labelFor(balance.leave_type)}
+            value={String(balance.remaining_days)}
+            change={`${balance.used_days} used · ${balance.pending_days} pending`}
+            detail={`${balance.entitled_days + balance.carried_over_days} entitled`}
+            warning={balance.remaining_days <= 0}
+          />
+        ))}
+      </div>
+    </>}
+
+    <form className="leave-form" onSubmit={(event) => void createRequest(event)}>
+      <p className="eyebrow">New request · {previewDays || "—"} day{previewDays === 1 ? "" : "s"}</p>
+      <div className="form-grid">
+        <Dropdown value={form.leave_type} options={leaveTypes} onChange={(value) => setForm({ ...form, leave_type: value })} ariaLabel="Leave type" placeholder="Leave type" />
+        <DatePicker value={form.start_date} onChange={(value) => setForm({ ...form, start_date: value, half_day: value !== form.end_date ? false : form.half_day })} ariaLabel="Start date" />
+        <DatePicker value={form.end_date} onChange={(value) => setForm({ ...form, end_date: value, half_day: value !== form.start_date ? false : form.half_day })} ariaLabel="End date" />
+      </div>
+      <div className="form-grid">
+        <label className="inline-check"><input type="checkbox" checked={form.half_day} disabled={form.start_date !== form.end_date} onChange={(event) => setForm({ ...form, half_day: event.target.checked })} /> Half day (single day only)</label>
+        <input placeholder="Reason (optional)" value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} />
+        <button className="primary-button" type="submit">Submit request</button>
+      </div>
+    </form>
+
+    <div className="section-heading task-heading"><div><p className="eyebrow">Requests</p><h2>{requests.length}</h2></div></div>
+    <div className="record-list">
+      {requests.length === 0 && <p className="lede">No leave requests in this filter.</p>}
+      {requests.map((request) => {
+        const mine = Boolean(me?.id && request.requested_by === me.id);
+        return <div className="record-row" key={request.id}>
+          <span className="record-avatar"><CalendarDays size={15} /></span>
+          <span className="record-copy">
+            <strong>{request.display_name ?? "My request"} · <span className="leave-type-tag">{colorFor(request.leave_type) && <span className="dropdown-swatch" style={{ background: colorFor(request.leave_type) }} />}{labelFor(request.leave_type)}</span></strong>
+            <small>{request.start_date} → {request.end_date} · {request.total_days ?? "—"} day{(request.total_days ?? 0) === 1 ? "" : "s"}{request.half_day ? " · half day" : ""}{request.reason ? ` · ${request.reason}` : ""}</small>
+          </span>
+          <span className={`status-pill leave-${request.status}`}>{request.status}</span>
+          <span className="task-actions">
+            {request.status === "pending" && canManage && <>
+              <button className="text-button" type="button" onClick={() => void decide(request.id, "approve")}>Approve</button>
+              <button className="text-button muted" type="button" onClick={() => void decide(request.id, "reject")}>Reject</button>
+            </>}
+            {request.status === "pending" && mine && <button className="text-button muted" type="button" onClick={() => void cancel(request.id)}>Cancel</button>}
+            {request.status === "approved" && canManage && <button className="text-button muted" type="button" onClick={() => void cancel(request.id)}>Cancel approved</button>}
+          </span>
+        </div>;
+      })}
+    </div>
+
+    {canManage && <>
+      <div className="section-heading task-heading"><div><p className="eyebrow">Team balances</p><h2>{balances.length}</h2></div></div>
+      <div className="record-list">{balances.map((balance) => <div className="record-row" key={balance.id}><span className="record-avatar"><UsersRound size={15} /></span><span className="record-copy"><strong>{balance.display_name} · {labelFor(balance.leave_type)}</strong><small>{balance.year} · {balance.remaining_days} remaining ({balance.used_days} used · {balance.pending_days} pending of {balance.entitled_days + balance.carried_over_days})</small></span></div>)}</div>
+      <form className="compact-form" onSubmit={(event) => void saveBalance(event)}>
+        <p className="eyebrow">Set entitlement</p>
+        <div className="form-grid">
+          <Dropdown value={balanceForm.user_id} options={[{ value: "", label: "Select person" }, ...users.map((user) => ({ value: user.id, label: user.display_name }))]} onChange={(value) => setBalanceForm({ ...balanceForm, user_id: value })} ariaLabel="Person" placeholder="Select person" />
+          <Dropdown value={balanceForm.leave_type} options={leaveTypes.length ? leaveTypes : [{ value: "annual", label: "Annual" }, { value: "sick", label: "Sick" }, { value: "personal", label: "Personal" }]} onChange={(value) => setBalanceForm({ ...balanceForm, leave_type: value })} ariaLabel="Leave type" />
+          <input type="number" min="0" step="0.5" value={balanceForm.entitled_days} onChange={(event) => setBalanceForm({ ...balanceForm, entitled_days: event.target.value })} required aria-label="Entitled days" />
+          <input type="number" step="0.5" value={balanceForm.carried_over_days} onChange={(event) => setBalanceForm({ ...balanceForm, carried_over_days: event.target.value })} placeholder="Carry over" aria-label="Carry over days" />
+        </div>
+        <div className="form-grid">
+          <button className="primary-button" type="submit">Save balance</button>
+          <button className="text-button" type="button" onClick={() => void seedBalances()}>Seed from policy</button>
+        </div>
+      </form>
+
+      <div className="section-heading task-heading"><div><p className="eyebrow">Policies</p><h2>{policies.length} defaults</h2></div></div>
+      <div className="record-list">{policies.map((policy) => <div className="record-row" key={policy.id}><span className="record-avatar"><CalendarDays size={15} /></span><span className="record-copy"><strong>{labelFor(policy.leave_type)}</strong><small>{policy.entitled_days} days/year · {policy.requires_balance ? "balance required" : "no balance"} · {policy.allow_half_day ? "half-days on" : "half-days off"}</small></span></div>)}</div>
+      <form className="compact-form" onSubmit={(event) => void savePolicy(event)}>
+        <p className="eyebrow">Update policy</p>
+        <div className="form-grid">
+          <Dropdown value={policyForm.leave_type} options={leaveTypes.length ? leaveTypes : [{ value: "annual", label: "Annual" }, { value: "sick", label: "Sick" }, { value: "personal", label: "Personal" }, { value: "unpaid", label: "Unpaid" }]} onChange={(value) => setPolicyForm({ ...policyForm, leave_type: value, requires_balance: value !== "unpaid" })} ariaLabel="Policy leave type" />
+          <input type="number" min="0" step="0.5" value={policyForm.entitled_days} onChange={(event) => setPolicyForm({ ...policyForm, entitled_days: event.target.value })} required aria-label="Default entitlement" />
+          <label className="inline-check"><input type="checkbox" checked={policyForm.allow_half_day} onChange={(event) => setPolicyForm({ ...policyForm, allow_half_day: event.target.checked })} /> Allow half day</label>
+          <label className="inline-check"><input type="checkbox" checked={policyForm.requires_balance} onChange={(event) => setPolicyForm({ ...policyForm, requires_balance: event.target.checked })} /> Requires balance</label>
+        </div>
+        <button className="primary-button" type="submit">Save policy</button>
+      </form>
+    </>}
+  </section>;
 }
 
 function ScheduleView() {
