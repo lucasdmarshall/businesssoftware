@@ -57,6 +57,8 @@ type CalendarEvent = { id: string; title: string; description: string; starts_at
 type LookupOption = { id: string; category: string; value: string; label: string; color: string; sort_order: number; is_active: boolean };
 type LookupCatalogItem = { category: string; title: string; permission: string; editable: boolean };
 type DropdownOption = { value: string; label: string; color?: string };
+type ModuleGrant = { code: string; can_view: boolean; can_manage: boolean };
+type DepartmentWorkspace = { id: string; name: string; slug: string; is_head: boolean; company_wide: boolean; modules: ModuleGrant[] };
 
 const workflowStatusClass: Record<string, string> = { in_review: "leave-pending", approved: "leave-approved", rejected: "leave-rejected", cancelled: "leave-rejected", draft: "" };
 
@@ -268,11 +270,19 @@ function App() {
   const [authState, setAuthState] = useState<AuthState>("loading");
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [activeView, setActiveView] = useState("overview");
+  const [workspaces, setWorkspaces] = useState<DepartmentWorkspace[]>([]);
+  const [activeWorkspace, setActiveWorkspace] = useState<DepartmentWorkspace | null>(null);
+  const [deptView, setDeptView] = useState("overview");
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("name-theme", theme);
   }, [theme]);
+
+  const loadWorkspaces = async () => {
+    const response = await fetch(`${apiBase}/workspaces/departments`, { credentials: "include" });
+    if (response.ok) setWorkspaces(await response.json());
+  };
 
   useEffect(() => {
     const loadWorkspace = async () => {
@@ -296,14 +306,13 @@ function App() {
         if (meResponse.ok) {
           setCurrentUser(await meResponse.json());
           setAuthState("authenticated");
-          // Bring the local read caches up to date with other clients' synced
-          // changes so this device keeps working if it later goes offline.
           try {
             await syncPendingOperations(apiBase);
             await pullRemoteChanges(apiBase);
           } catch {
             // Running outside Tauri (no local SQLite) or a transient error.
           }
+          try { await loadWorkspaces(); } catch { /* workspace API may need migration */ }
         } else {
           setAuthState("login");
         }
@@ -340,11 +349,45 @@ function App() {
     } catch {
       // Keep online auth working when running the frontend outside Tauri or offline.
     }
+    try { await loadWorkspaces(); } catch { /* ignore */ }
+  };
+
+  const enterWorkspace = async (id: string) => {
+    const response = await fetch(`${apiBase}/workspaces/departments/${id}`, { credentials: "include" });
+    if (!response.ok) return;
+    const ws = await response.json() as DepartmentWorkspace;
+    setActiveWorkspace(ws);
+    setDeptView("overview");
+  };
+
+  const exitWorkspace = () => {
+    setActiveWorkspace(null);
+    setDeptView("overview");
+    void loadWorkspaces();
   };
 
   if (authState === "loading") return <LoadingScreen />;
   if (authState === "setup" || authState === "login") {
     return <AuthScreen mode={authState} theme={theme} onThemeToggle={toggleTheme} onAuthenticated={handleAuthenticated} />;
+  }
+
+  if (activeWorkspace) {
+    return (
+      <>
+        <DepartmentWorkspaceShell
+          workspace={activeWorkspace}
+          view={deptView}
+          onViewChange={setDeptView}
+          onExit={exitWorkspace}
+          systemHealth={systemHealth}
+          currentUser={currentUser}
+        />
+        <button className="theme-switcher" type="button" onClick={toggleTheme} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}>
+          {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+          <span>{theme === "dark" ? "Light" : "Dark"}</span>
+        </button>
+      </>
+    );
   }
 
   return (
@@ -354,12 +397,12 @@ function App() {
         <div className="brand-mark">N</div>
         <div className="workspace-switcher">
           <span className="workspace-avatar">A</span>
-          <span className="workspace-name">Acme workspace</span>
+          <span className="workspace-name">{organizations[0]?.name ?? currentUser?.organization ?? "Company"}</span>
           <ChevronDown size={15} />
         </div>
 
         <nav className="primary-nav" aria-label="Primary navigation">
-          <p className="eyebrow">Workspace</p>
+          <p className="eyebrow">Company</p>
           {navigation.filter(({ permission }) => !permission || !currentUser?.permissions?.length || currentUser.permissions.includes(permission)).map(({ label, icon: Icon }) => {
             const view = viewForLabel(label);
             const isActive = activeView === view;
@@ -378,8 +421,8 @@ function App() {
             <span>Help center</span>
           </button>
           <div className="profile-row">
-            <span className="profile-avatar">L</span>
-            <span className="profile-copy"><strong>Lucas</strong><small>Administrator</small></span>
+            <span className="profile-avatar">{(currentUser?.name ?? "U").slice(0, 1)}</span>
+            <span className="profile-copy"><strong>{currentUser?.name ?? "User"}</strong><small>{currentUser?.role ?? ""}</small></span>
             <PanelLeft size={15} />
           </div>
         </div>
@@ -387,7 +430,7 @@ function App() {
 
       <main className="main-content" id="main-content">
         <header className="topbar">
-          <div className="breadcrumb">Overview <span>/</span> Workspace</div>
+          <div className="breadcrumb">Company <span>/</span> {activeView}</div>
           <div className="topbar-actions">
             <button className="search-button" type="button"><Search size={16} aria-hidden="true" /> Search <kbd>⌘ K</kbd></button>
             <NotificationBell />
@@ -398,16 +441,29 @@ function App() {
         {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "projects" ? <ProjectsView /> : activeView === "approvals" ? <WorkflowView /> : activeView === "finance" ? <FinanceView /> : activeView === "hr" ? <HRView /> : activeView === "sales" ? <SalesView /> : activeView === "it" ? <ITView /> : activeView === "reports" ? <ReportsView /> : activeView === "calendar" ? <CalendarView /> : activeView === "attendance" ? <AttendanceView canManage={Boolean(currentUser?.permissions?.includes("attendance.manage"))} canCompanySettings={Boolean(currentUser?.permissions?.includes("organization.manage"))} /> : activeView === "leave" ? <LeaveView canManage={Boolean(currentUser?.permissions?.includes("leave.manage"))} currentEmail={currentUser?.email ?? ""} /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : activeView === "settings" ? <SettingsView /> : <section className="content-wrap">
           <div className="page-heading">
             <div>
-              <p className="eyebrow">Wednesday, 20 August 2026</p>
-              <h1>Good morning, Lucas.</h1>
-              <p className="lede">Here is what is happening across your workspace.</p>
+              <p className="eyebrow">Company home</p>
+              <h1>Choose a department.</h1>
+              <p className="lede">Each department is its own workspace. Other departments cannot see HR data — only company-wide access can.</p>
             </div>
-            <button className="primary-button" type="button">Open workspace <ArrowUpRight size={16} /></button>
           </div>
 
           <div className="connection-strip">
             <span className={`connection-icon ${systemHealth.status === "ok" ? "ready" : "offline"}`}><Activity size={15} /></span>
             <span><strong>{organizations[0]?.name ?? currentUser?.organization ?? "Company setup"}</strong><small>{systemHealth.status === "ok" ? `Backend connected · PostgreSQL ${systemHealth.database}` : "Start the local backend to connect this workspace"}</small></span>
+          </div>
+
+          <div className="section-heading" style={{ marginTop: 34 }}>
+            <div><p className="eyebrow">Departments</p><h2>{workspaces.length} workspaces</h2></div>
+          </div>
+          <div className="record-list">
+            {workspaces.length === 0 && <p className="lede">No department workspaces yet. Create a department in People, assign members (and heads), then refresh. Owners with company-wide access see every department.</p>}
+            {workspaces.map((ws) => (
+              <button className="record-row" key={ws.id} type="button" onClick={() => void enterWorkspace(ws.id)} style={{ width: "100%", textAlign: "left", cursor: "pointer" }}>
+                <span className="record-avatar department-avatar">{ws.name.slice(0, 2).toUpperCase()}</span>
+                <span className="record-copy"><strong>{ws.name}</strong><small>{ws.is_head ? "Department head" : ws.company_wide ? "Company-wide access" : "Member"} · {ws.modules.length} modules</small></span>
+                <span className="status-pill">Open <ArrowUpRight size={14} /></span>
+              </button>
+            ))}
           </div>
 
           <DashboardOverview />
@@ -419,6 +475,454 @@ function App() {
         <span>{theme === "dark" ? "Light" : "Dark"}</span>
       </button>
     </div>
+  );
+}
+
+const departmentNav: Array<{ code: string; label: string; icon: typeof LayoutDashboard }> = [
+  { code: "overview", label: "Overview", icon: LayoutDashboard },
+  { code: "users", label: "User Management", icon: UsersRound },
+  { code: "access", label: "Access Control", icon: SlidersHorizontal },
+  { code: "attendance", label: "Attendance", icon: Clock3 },
+  { code: "calendar", label: "Calendar", icon: CalendarDays },
+  { code: "leave", label: "Leave", icon: CalendarDays },
+  { code: "schedule", label: "Schedule", icon: CalendarDays },
+  { code: "salary", label: "Salary", icon: Wallet },
+  { code: "bonus", label: "Bonus", icon: Wallet },
+  { code: "finance", label: "Finance", icon: Wallet },
+  { code: "tasks", label: "Tasks", icon: BriefcaseBusiness },
+  { code: "activity", label: "Activity", icon: Activity },
+  { code: "settings", label: "Settings", icon: SlidersHorizontal },
+];
+
+function DepartmentWorkspaceShell({ workspace, view, onViewChange, onExit, systemHealth, currentUser }: {
+  workspace: DepartmentWorkspace;
+  view: string;
+  onViewChange: (view: string) => void;
+  onExit: () => void;
+  systemHealth: SystemHealth;
+  currentUser: CurrentUser | null;
+}) {
+  const allowed = new Map(workspace.modules.map((module) => [module.code, module]));
+  const nav = departmentNav.filter((item) => allowed.has(item.code));
+  const manage = (code: string) => Boolean(allowed.get(code)?.can_manage);
+
+  return (
+    <div className="app-shell">
+      <a className="skip-link" href="#main-content">Skip to content</a>
+      <aside className="sidebar">
+        <div className="brand-mark">N</div>
+        <button className="workspace-switcher" type="button" onClick={onExit} title="Exit department">
+          <span className="workspace-avatar">{workspace.name.slice(0, 1)}</span>
+          <span className="workspace-name">{workspace.name}</span>
+          <ChevronDown size={15} />
+        </button>
+        <nav className="primary-nav" aria-label="Department navigation">
+          <p className="eyebrow">Department</p>
+          {nav.map(({ code, label, icon: Icon }) => (
+            <button key={code} className={`nav-item ${view === code ? "active" : ""}`} aria-current={view === code ? "page" : undefined} type="button" onClick={() => onViewChange(code)}>
+              <Icon size={17} strokeWidth={1.8} aria-hidden="true" />
+              <span>{label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-footer">
+          <button className="nav-item" type="button" onClick={onExit}>
+            <PanelLeft size={17} strokeWidth={1.8} />
+            <span>All departments</span>
+          </button>
+          <div className="profile-row">
+            <span className="profile-avatar">{(currentUser?.name ?? "U").slice(0, 1)}</span>
+            <span className="profile-copy"><strong>{currentUser?.name ?? "User"}</strong><small>{workspace.is_head ? "Dept head" : workspace.company_wide ? "Company access" : "Member"}</small></span>
+          </div>
+        </div>
+      </aside>
+      <main className="main-content" id="main-content">
+        <header className="topbar">
+          <div className="breadcrumb">{workspace.name} <span>/</span> {view}</div>
+          <div className="topbar-actions">
+            <NotificationBell />
+            <span className={`status-dot ${systemHealth.status !== "ok" ? "offline" : ""}`} role="status" aria-label={`Backend ${systemHealth.status}`} />
+          </div>
+        </header>
+        {view === "users" ? <DeptUsersView departmentId={workspace.id} canManage={manage("users")} />
+          : view === "access" ? <DeptAccessView departmentId={workspace.id} canManage={manage("access")} />
+          : view === "salary" ? <DeptSalaryView departmentId={workspace.id} canManage={manage("salary")} />
+          : view === "bonus" ? <DeptBonusView departmentId={workspace.id} canManage={manage("bonus")} />
+          : view === "finance" ? <DeptFinanceView departmentId={workspace.id} canManage={manage("finance")} hasSalary={Boolean(allowed.get("salary"))} hasBonus={Boolean(allowed.get("bonus"))} onOpen={(code) => onViewChange(code)} />
+          : view === "attendance" ? <AttendanceView canManage={manage("attendance") || Boolean(currentUser?.permissions?.includes("attendance.manage"))} canCompanySettings={Boolean(currentUser?.permissions?.includes("organization.manage"))} />
+          : view === "leave" ? <LeaveView canManage={manage("leave") || Boolean(currentUser?.permissions?.includes("leave.manage"))} currentEmail={currentUser?.email ?? ""} />
+          : view === "calendar" ? <CalendarView />
+          : view === "schedule" ? <ScheduleView />
+          : view === "tasks" ? <WorkView />
+          : view === "activity" ? <ActivityView />
+          : view === "settings" ? <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">{workspace.name}</p><h1>Settings.</h1><p className="lede">Department settings stay inside this workspace. Company-wide lookup lists remain under Company → Settings.</p></div></div></section>
+          : <DeptOverviewView workspace={workspace} />}
+      </main>
+    </div>
+  );
+}
+
+function DeptOverviewView({ workspace }: { workspace: DepartmentWorkspace }) {
+  return (
+    <section className="content-wrap">
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">{workspace.name} overview</p>
+          <h1>{workspace.name} dashboard.</h1>
+          <p className="lede">This workspace is isolated. Other departments cannot see these modules unless they hold company-wide access.</p>
+        </div>
+      </div>
+      <div className="metric-grid">
+        <Metric label="Modules" value={String(workspace.modules.length)} change={workspace.is_head ? "head access" : workspace.company_wide ? "company-wide" : "member"} detail="visible in this workspace" />
+        <Metric label="Access Control" value={workspace.modules.some((m) => m.code === "access") ? "On" : "Hidden"} change="heads & company only" detail="per-user grants inside this dept" />
+        <Metric label="Isolation" value="On" change="deny by default" detail="cross-dept requires company grant" />
+      </div>
+    </section>
+  );
+}
+
+function DeptUsersView({ departmentId, canManage }: { departmentId: string; canManage: boolean }) {
+  const [members, setMembers] = useState<Array<{ user_id: string; display_name: string; email: string; phone: string; employee_id: string; is_head: boolean; status: string }>>([]);
+  useEffect(() => {
+    void fetch(`${apiBase}/workspaces/departments/${departmentId}/members`, { credentials: "include" })
+      .then((response) => response.ok ? response.json() : [])
+      .then(setMembers)
+      .catch(() => setMembers([]));
+  }, [departmentId]);
+  return (
+    <section className="content-wrap">
+      <div className="page-heading"><div><p className="eyebrow">User Management</p><h1>People in this department.</h1><p className="lede">Phone, employee code, and membership — scoped to this department only.{canManage ? "" : " Read-only."}</p></div></div>
+      <div className="record-list">
+        {members.map((member) => (
+          <div className="record-row" key={member.user_id}>
+            <span className="record-avatar">{member.display_name.slice(0, 2).toUpperCase()}</span>
+            <span className="record-copy">
+              <strong>{member.display_name}</strong>
+              <small>{member.email} · {member.phone || "no phone"} · ID {member.employee_id || "—"} · {member.status}</small>
+            </span>
+            <span className="status-pill">{member.is_head ? "head" : "member"}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function DeptAccessView({ departmentId, canManage }: { departmentId: string; canManage: boolean }) {
+  const [rows, setRows] = useState<Array<{ user_id: string; display_name: string; is_head: boolean; modules: ModuleGrant[] }>>([]);
+  const [message, setMessage] = useState("");
+  const load = async () => {
+    const response = await fetch(`${apiBase}/workspaces/departments/${departmentId}/access`, { credentials: "include" });
+    if (response.ok) setRows(await response.json());
+  };
+  useEffect(() => { void load(); }, [departmentId]);
+
+  const toggleHead = async (userId: string, isHead: boolean) => {
+    const response = await fetch(`${apiBase}/workspaces/departments/${departmentId}/access`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, is_head: isHead }),
+    });
+    setMessage(response.ok ? "Access updated" : "Could not update access");
+    if (response.ok) void load();
+  };
+
+  const saveModules = async (userId: string, modules: ModuleGrant[]) => {
+    const response = await fetch(`${apiBase}/workspaces/departments/${departmentId}/access`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, modules }),
+    });
+    setMessage(response.ok ? "Module grants saved" : "Could not save grants");
+    if (response.ok) void load();
+  };
+
+  return (
+    <section className="content-wrap">
+      <div className="page-heading"><div><p className="eyebrow">Access Control</p><h1>Who can do what here.</h1><p className="lede">Only department heads and company-wide access see this menu. Grants apply inside this department only.</p></div></div>
+      {message && <p className="inline-message">{message}</p>}
+      {!canManage && <p className="lede">You can view access but not change it.</p>}
+      <div className="record-list">
+        {rows.map((row) => (
+          <div className="record-row" key={row.user_id} style={{ alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+            <span className="record-avatar">{row.display_name.slice(0, 2).toUpperCase()}</span>
+            <span className="record-copy" style={{ flex: 1 }}>
+              <strong>{row.display_name}</strong>
+              <small>{row.is_head ? "Department head" : "Member"}</small>
+              <div className="permission-grid" style={{ marginTop: 8 }}>
+                {row.modules.map((module) => (
+                  <label key={module.code}>
+                    <input
+                      type="checkbox"
+                      checked={module.can_view}
+                      disabled={!canManage}
+                      onChange={(event) => {
+                        const next = row.modules.map((item) => item.code === module.code ? { ...item, can_view: event.target.checked, can_manage: event.target.checked ? item.can_manage : false } : item);
+                        void saveModules(row.user_id, next);
+                      }}
+                    />
+                    {module.code}{module.can_manage ? " · manage" : ""}
+                  </label>
+                ))}
+              </div>
+            </span>
+            {canManage && (
+              <span className="task-actions">
+                <button className="text-button" type="button" onClick={() => void toggleHead(row.user_id, !row.is_head)}>{row.is_head ? "Remove head" : "Make head"}</button>
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function DeptSalaryView({ departmentId, canManage }: { departmentId: string; canManage: boolean }) {
+  const [rows, setRows] = useState<Array<{ id: string; user_id: string; user_name: string; amount: number; currency: string; month: string; withdrawn: boolean; note: string }>>([]);
+  const [members, setMembers] = useState<Array<{ user_id: string; display_name: string }>>([]);
+  const [form, setForm] = useState({ user_id: "", amount: "", month: new Date().toISOString().slice(0, 7) + "-01", withdrawn: false, note: "" });
+  const [message, setMessage] = useState("");
+  const load = async () => {
+    const [salaryRes, memberRes] = await Promise.all([
+      fetch(`${apiBase}/workspaces/departments/${departmentId}/salaries`, { credentials: "include" }),
+      fetch(`${apiBase}/workspaces/departments/${departmentId}/members`, { credentials: "include" }),
+    ]);
+    if (salaryRes.ok) setRows(await salaryRes.json());
+    if (memberRes.ok) setMembers(await memberRes.json());
+  };
+  useEffect(() => { void load(); }, [departmentId]);
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    const response = await fetch(`${apiBase}/workspaces/departments/${departmentId}/salaries`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...form, amount: Number(form.amount) }),
+    });
+    setMessage(response.ok ? "Salary saved" : "Could not save salary");
+    if (response.ok) { setForm((current) => ({ ...current, amount: "", note: "" })); void load(); }
+  };
+  return (
+    <section className="content-wrap">
+      <div className="page-heading"><div><p className="eyebrow">Salary management</p><h1>Payroll for this department.</h1><p className="lede">Amount, month, withdrawn status — not visible to other departments.</p></div></div>
+      {message && <p className="inline-message">{message}</p>}
+      {canManage && <form className="compact-form" onSubmit={(event) => void save(event)}>
+        <div className="form-grid">
+          <Dropdown value={form.user_id} options={[{ value: "", label: "Select person" }, ...members.map((m) => ({ value: m.user_id, label: m.display_name }))]} onChange={(value) => setForm({ ...form, user_id: value })} ariaLabel="Person" placeholder="Select person" />
+          <DatePicker value={form.month} onChange={(value) => setForm({ ...form, month: value })} ariaLabel="Month" />
+          <input inputMode="decimal" placeholder="Amount" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value.replace(/[^0-9.]/g, "") })} required />
+          <label className="inline-check"><input type="checkbox" checked={form.withdrawn} onChange={(event) => setForm({ ...form, withdrawn: event.target.checked })} /> Withdrawn</label>
+        </div>
+        <button className="primary-button" type="submit">Save</button>
+      </form>}
+      <div className="record-list">{rows.map((row) => <div className="record-row" key={row.id}><span className="record-avatar"><Wallet size={15} /></span><span className="record-copy"><strong>{row.user_name}</strong><small>{row.month} · {row.currency} {row.amount.toFixed(2)}{row.note ? ` · ${row.note}` : ""}</small></span><span className={`status-pill ${row.withdrawn ? "leave-approved" : ""}`}>{row.withdrawn ? "withdrawn" : "not withdrawn"}</span></div>)}</div>
+    </section>
+  );
+}
+
+function DeptBonusView({ departmentId, canManage }: { departmentId: string; canManage: boolean }) {
+  const [rows, setRows] = useState<Array<{ id: string; public_id: string; user_name: string; role_label: string; privilege: string; amount: number; currency: string; debited_on: string }>>([]);
+  const [members, setMembers] = useState<Array<{ user_id: string; display_name: string }>>([]);
+  const [form, setForm] = useState({ user_id: "", role_label: "", privilege: "", amount: "", debited_on: new Date().toISOString().slice(0, 10) });
+  const [message, setMessage] = useState("");
+  const load = async () => {
+    const [bonusRes, memberRes] = await Promise.all([
+      fetch(`${apiBase}/workspaces/departments/${departmentId}/bonuses`, { credentials: "include" }),
+      fetch(`${apiBase}/workspaces/departments/${departmentId}/members`, { credentials: "include" }),
+    ]);
+    if (bonusRes.ok) setRows(await bonusRes.json());
+    if (memberRes.ok) setMembers(await memberRes.json());
+  };
+  useEffect(() => { void load(); }, [departmentId]);
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    const response = await fetch(`${apiBase}/workspaces/departments/${departmentId}/bonuses`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...form, amount: Number(form.amount) }),
+    });
+    setMessage(response.ok ? "Bonus recorded" : "Could not save bonus");
+    if (response.ok) { setForm((current) => ({ ...current, privilege: "", amount: "" })); void load(); }
+  };
+  return (
+    <section className="content-wrap">
+      <div className="page-heading"><div><p className="eyebrow">Bonus management</p><h1>Privileges & payouts.</h1><p className="lede">Each bonus gets a system 8-digit ID stored in the database for later checks.</p></div></div>
+      {message && <p className="inline-message">{message}</p>}
+      {canManage && <form className="compact-form" onSubmit={(event) => void save(event)}>
+        <div className="form-grid">
+          <Dropdown value={form.user_id} options={[{ value: "", label: "Select person" }, ...members.map((m) => ({ value: m.user_id, label: m.display_name }))]} onChange={(value) => setForm({ ...form, user_id: value })} ariaLabel="Person" placeholder="Select person" />
+          <input placeholder="Role" value={form.role_label} onChange={(event) => setForm({ ...form, role_label: event.target.value })} />
+          <input placeholder="Privilege (e.g. punctuality)" value={form.privilege} onChange={(event) => setForm({ ...form, privilege: event.target.value })} />
+          <input inputMode="decimal" placeholder="Amount" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value.replace(/[^0-9.]/g, "") })} required />
+          <DatePicker value={form.debited_on} onChange={(value) => setForm({ ...form, debited_on: value })} ariaLabel="Debited on" />
+        </div>
+        <button className="primary-button" type="submit">Add bonus</button>
+      </form>}
+      <div className="record-list">{rows.map((row) => <div className="record-row" key={row.id}><span className="record-avatar"><Wallet size={15} /></span><span className="record-copy"><strong>{row.user_name} · {row.privilege || row.role_label || "Bonus"}</strong><small>ID {row.public_id} · {row.debited_on} · {row.currency} {row.amount.toFixed(2)} · {row.role_label}</small></span></div>)}</div>
+    </section>
+  );
+}
+
+const DEPT_FINANCE_CATEGORY_OPTIONS: DropdownOption[] = [
+  { value: "expense", label: "Expense" },
+  { value: "reimbursement", label: "Reimbursement" },
+  { value: "petty_cash", label: "Petty cash" },
+  { value: "allowance", label: "Allowance" },
+  { value: "salary", label: "Salary note" },
+  { value: "bonus", label: "Bonus note" },
+  { value: "other", label: "Other" },
+];
+const DEPT_FINANCE_STATUS_OPTIONS: DropdownOption[] = [
+  { value: "recorded", label: "Recorded" },
+  { value: "pending", label: "Pending" },
+  { value: "settled", label: "Settled" },
+];
+
+function DeptFinanceView({ departmentId, canManage, hasSalary, hasBonus, onOpen }: {
+  departmentId: string;
+  canManage: boolean;
+  hasSalary: boolean;
+  hasBonus: boolean;
+  onOpen: (code: string) => void;
+}) {
+  type Entry = { id: string; entry_date: string; category: string; direction: string; title: string; amount: number; currency: string; person_id: string; person_name: string; status: string; note: string };
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [summary, setSummary] = useState<{ out_total: number; in_total: number; pending_count: number; entry_count: number; currency: string } | null>(null);
+  const [salaries, setSalaries] = useState<Array<{ id: string; user_name: string; amount: number; currency: string; month: string; withdrawn: boolean }>>([]);
+  const [bonuses, setBonuses] = useState<Array<{ id: string; public_id: string; user_name: string; amount: number; currency: string; privilege: string; debited_on: string }>>([]);
+  const [members, setMembers] = useState<Array<{ user_id: string; display_name: string }>>([]);
+  const [form, setForm] = useState({ title: "", amount: "", category: "expense", direction: "out", entry_date: new Date().toISOString().slice(0, 10), person_id: "", status: "recorded", note: "" });
+  const [message, setMessage] = useState("");
+
+  const load = async () => {
+    const requests: Array<Promise<Response>> = [
+      fetch(`${apiBase}/workspaces/departments/${departmentId}/finance`, { credentials: "include" }),
+      fetch(`${apiBase}/workspaces/departments/${departmentId}/finance/summary`, { credentials: "include" }),
+      fetch(`${apiBase}/workspaces/departments/${departmentId}/members`, { credentials: "include" }),
+    ];
+    if (hasSalary) requests.push(fetch(`${apiBase}/workspaces/departments/${departmentId}/salaries`, { credentials: "include" }));
+    if (hasBonus) requests.push(fetch(`${apiBase}/workspaces/departments/${departmentId}/bonuses`, { credentials: "include" }));
+    const responses = await Promise.all(requests);
+    if (responses[0].ok) setEntries(await responses[0].json());
+    if (responses[1].ok) setSummary(await responses[1].json());
+    if (responses[2].ok) setMembers(await responses[2].json());
+    let idx = 3;
+    if (hasSalary && responses[idx]?.ok) { setSalaries(await responses[idx].json()); idx += 1; }
+    if (hasBonus && responses[idx]?.ok) setBonuses(await responses[idx].json());
+  };
+  useEffect(() => { void load(); }, [departmentId, hasSalary, hasBonus]);
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    const response = await fetch(`${apiBase}/workspaces/departments/${departmentId}/finance`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...form, amount: Number(form.amount) }),
+    });
+    setMessage(response.ok ? "Entry recorded" : "Could not save entry");
+    if (response.ok) {
+      setForm((current) => ({ ...current, title: "", amount: "", note: "" }));
+      void load();
+    }
+  };
+
+  const setStatus = async (id: string, status: string) => {
+    const response = await fetch(`${apiBase}/workspaces/departments/${departmentId}/finance/status`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status }),
+    });
+    if (response.ok) void load();
+  };
+
+  const money = (amount: number, currency = "USD") => `${currency} ${Number(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+
+  return (
+    <section className="content-wrap">
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">Department finance</p>
+          <h1>What this team spends.</h1>
+          <p className="lede">Department money needs + a tracking table. Company ledger / AP / AR stay in the company Finance suite — not here.</p>
+        </div>
+      </div>
+      {message && <p className="inline-message">{message}</p>}
+
+      {summary && (
+        <div className="metric-grid">
+          <Metric label="Money out" value={money(summary.out_total, summary.currency)} change={`${summary.entry_count} entries`} detail="recorded in this department" />
+          <Metric label="Money in" value={money(summary.in_total, summary.currency)} change={`${summary.pending_count} pending`} detail="reimbursements / inflows" />
+          <Metric label="Net track" value={money(summary.in_total - summary.out_total, summary.currency)} change="in − out" detail="tracking only — not GL" />
+        </div>
+      )}
+
+      {(hasSalary || hasBonus) && (
+        <div className="dept-finance-needs">
+          <div className="section-heading task-heading"><div><p className="eyebrow">This department needs</p><h2>Built-in money modules</h2></div></div>
+          <div className="dept-finance-need-grid">
+            {hasSalary && (
+              <button className="dept-finance-need" type="button" onClick={() => onOpen("salary")}>
+                <strong>Salary</strong>
+                <small>{salaries.slice(0, 3).map((row) => `${row.user_name} ${money(row.amount, row.currency)}`).join(" · ") || "Open salary table"}</small>
+              </button>
+            )}
+            {hasBonus && (
+              <button className="dept-finance-need" type="button" onClick={() => onOpen("bonus")}>
+                <strong>Bonus</strong>
+                <small>{bonuses.slice(0, 3).map((row) => `${row.user_name} ${money(row.amount, row.currency)}`).join(" · ") || "Open bonus table"}</small>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="section-heading task-heading"><div><p className="eyebrow">Tracking table</p><h2>{entries.length} rows</h2></div></div>
+      {canManage && (
+        <form className="compact-form" onSubmit={(event) => void save(event)}>
+          <div className="form-grid">
+            <input placeholder="Title" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required />
+            <input inputMode="decimal" placeholder="Amount" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value.replace(/[^0-9.]/g, "") })} required />
+            <Dropdown value={form.category} options={DEPT_FINANCE_CATEGORY_OPTIONS} onChange={(value) => setForm({ ...form, category: value })} ariaLabel="Category" />
+            <Dropdown value={form.direction} options={[{ value: "out", label: "Out" }, { value: "in", label: "In" }]} onChange={(value) => setForm({ ...form, direction: value })} ariaLabel="Direction" />
+          </div>
+          <div className="form-grid">
+            <DatePicker value={form.entry_date} onChange={(value) => setForm({ ...form, entry_date: value })} ariaLabel="Date" />
+            <Dropdown value={form.person_id} options={[{ value: "", label: "No person" }, ...members.map((m) => ({ value: m.user_id, label: m.display_name }))]} onChange={(value) => setForm({ ...form, person_id: value })} ariaLabel="Person" placeholder="Person" />
+            <Dropdown value={form.status} options={DEPT_FINANCE_STATUS_OPTIONS} onChange={(value) => setForm({ ...form, status: value })} ariaLabel="Status" />
+            <input placeholder="Note" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} />
+            <button className="primary-button" type="submit">Add row</button>
+          </div>
+        </form>
+      )}
+      <div className="attendance-table-wrap">
+        <table className="attendance-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Title</th>
+              <th>Category</th>
+              <th>Person</th>
+              <th>Direction</th>
+              <th>Amount</th>
+              <th>Status</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {entries.length === 0 && <tr><td colSpan={8}>No tracking rows yet.</td></tr>}
+            {entries.map((entry) => (
+              <tr key={entry.id}>
+                <td>{entry.entry_date}</td>
+                <td>{entry.title}{entry.note ? ` · ${entry.note}` : ""}</td>
+                <td>{entry.category.replace("_", " ")}</td>
+                <td>{entry.person_name || "—"}</td>
+                <td>{entry.direction}</td>
+                <td>{money(entry.amount, entry.currency)}</td>
+                <td><span className="status-pill">{entry.status}</span></td>
+                <td>
+                  {canManage && entry.status === "pending" && <button className="text-button" type="button" onClick={() => void setStatus(entry.id, "settled")}>Settle</button>}
+                  {canManage && entry.status !== "void" && <button className="text-button muted" type="button" onClick={() => void setStatus(entry.id, "void")}>Void</button>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 

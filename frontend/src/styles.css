@@ -149,3 +149,24 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   .attendance-desk { grid-template-columns: 1fr; }
   .attendance-policy { flex-direction: column; align-items: flex-start; }
 }
+
+.position-ladder-legend { display: flex; align-items: center; gap: 12px; margin: 28px 0 8px; color: var(--muted); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+.position-ladder-line { flex: 1; height: 1px; background: linear-gradient(90deg, var(--accent), var(--line)); opacity: .7; }
+.position-ladder-row { cursor: default; transition: background .15s ease, transform .15s ease; }
+.position-ladder-row[draggable="true"] { cursor: grab; }
+.position-ladder-row.dragging { opacity: .55; }
+.position-ladder-row.drag-over { background: var(--accent-soft); box-shadow: inset 0 2px 0 var(--accent); }
+.position-rank { width: 22px; text-align: center; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.position-drag { color: var(--faint); display: grid; place-items: center; }
+.position-add-form { margin-top: 36px; max-width: 420px; }
+.position-add-form .eyebrow { margin-bottom: 4px; }
+
+.dept-finance-needs { margin: 28px 0 36px; }
+.dept-finance-need-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.dept-finance-need { text-align: left; border: 1px solid var(--line); background: var(--surface); color: inherit; border-radius: 10px; padding: 16px 18px; cursor: pointer; display: grid; gap: 6px; }
+.dept-finance-need:hover { border-color: var(--accent); }
+.dept-finance-need strong { font-size: 14px; }
+.dept-finance-need small { color: var(--muted); font-size: 11px; }
+@media (max-width: 960px) {
+  .dept-finance-need-grid { grid-template-columns: 1fr; }
+}
