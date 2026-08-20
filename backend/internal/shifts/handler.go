@@ -12,6 +12,7 @@ import (
 	"name/backend/internal/auth"
 	"name/backend/internal/httpapi"
 	"name/backend/internal/notify"
+	"name/backend/internal/workspace"
 )
 
 type Handler struct {
@@ -79,6 +80,11 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return
 	}
+	deptID := strings.TrimSpace(r.URL.Query().Get("department_id"))
+	if deptID != "" && !workspace.CanEnterDepartment(r.Context(), h.DB, h.Auth, user, deptID) {
+		httpapi.WriteError(w, http.StatusForbidden, "forbidden", "you cannot view schedule for this department")
+		return
+	}
 	canManage := h.Auth.HasPermission(r.Context(), user, "shifts.manage")
 	query := `
 		SELECT s.id, s.assigned_to, u.display_name, s.title, s.shift_date::text,
@@ -92,20 +98,29 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 	args := []any{user.OrganizationID}
 	argN := 2
 
+	if deptID != "" {
+		query += ` AND ` + workspace.MemberExistsSQL("s.assigned_to", argN)
+		args = append(args, deptID)
+		argN++
+	}
+
 	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
 	if scope == "" {
-		if canManage {
+		if canManage || deptID != "" {
 			scope = "team"
 		} else {
 			scope = "mine"
 		}
 	}
-	if scope == "mine" || !canManage {
+	// Department workspace: team scope = everyone in that department.
+	// Company schedule still requires shifts.manage for team.
+	seeTeam := scope != "mine" && (canManage || deptID != "")
+	if !seeTeam {
 		query += fmt.Sprintf(` AND s.assigned_to=$%d`, argN)
 		args = append(args, user.ID)
 		argN++
 	}
-	if uid := strings.TrimSpace(r.URL.Query().Get("user_id")); uid != "" && canManage {
+	if uid := strings.TrimSpace(r.URL.Query().Get("user_id")); uid != "" && seeTeam {
 		query += fmt.Sprintf(` AND s.assigned_to=$%d`, argN)
 		args = append(args, uid)
 		argN++
@@ -165,6 +180,11 @@ func (h Handler) Week(w http.ResponseWriter, r *http.Request) {
 		to = start.AddDate(0, 0, 6).Format("2006-01-02")
 	}
 	canManage := h.Auth.HasPermission(r.Context(), user, "shifts.manage")
+	deptID := strings.TrimSpace(r.URL.Query().Get("department_id"))
+	if deptID != "" && !workspace.CanEnterDepartment(r.Context(), h.DB, h.Auth, user, deptID) {
+		httpapi.WriteError(w, http.StatusForbidden, "forbidden", "you cannot view schedule for this department")
+		return
+	}
 	query := `
 		SELECT
 			COUNT(*) FILTER (WHERE status='scheduled'),
@@ -172,11 +192,22 @@ func (h Handler) Week(w http.ResponseWriter, r *http.Request) {
 			COUNT(*) FILTER (WHERE status='completed'),
 			COUNT(*) FILTER (WHERE status='cancelled'),
 			COALESCE(SUM(EXTRACT(EPOCH FROM (ends_at - starts_at))) FILTER (WHERE status <> 'cancelled'), 0)
-		FROM shifts
-		WHERE organization_id=$1 AND shift_date>=$2::date AND shift_date<=$3::date`
+		FROM shifts s
+		WHERE s.organization_id=$1 AND s.shift_date>=$2::date AND s.shift_date<=$3::date`
 	args := []any{user.OrganizationID, from, to}
-	if !canManage {
-		query += ` AND assigned_to=$4`
+	argN := 4
+	if deptID != "" {
+		query += ` AND ` + workspace.MemberExistsSQL("s.assigned_to", argN)
+		args = append(args, deptID)
+		argN++
+	}
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	seeTeam := scope != "mine" && (canManage || deptID != "")
+	if scope == "" {
+		seeTeam = canManage || deptID != ""
+	}
+	if !seeTeam {
+		query += fmt.Sprintf(` AND s.assigned_to=$%d`, argN)
 		args = append(args, user.ID)
 	}
 	var summary WeekSummary

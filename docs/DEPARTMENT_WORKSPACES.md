@@ -86,7 +86,9 @@ be able to enter that workspace, then filters rows to people in
 - Leave list + balances  
 - Attendance organization desk / people / today rollup  
 - Tasks (exact department; assignee list uses department members)  
-- Activity / audit trail (actors in the department, or metadata/entity scoped)
+- Activity / audit trail (actors in the department, or metadata/entity scoped)  
+- Calendar (org-wide announcements + events created by department members)  
+- Schedule / shifts (assignees in the department; week rollup matches scope)
 
 People → **Department membership** assigns `user_departments` (with head flag)
 via `POST /api/v1/user-departments`. Access Control “Make head” updates
@@ -99,8 +101,8 @@ via `POST /api/v1/user-departments`. Access Control “Make head” updates
 - Workspace foundation: migration `030_department_workspaces.sql`
 - Position seed + reorder: migration `031_department_position_access.sql`
 - Department Finance tracking table: migration `032_department_finance.sql`  
-- Remaining gap: Calendar / Schedule still need the same `department_id`
-  query pattern end-to-end (Leave / Attendance / Tasks / Activity are scoped)
+- Remaining gap: none for the core operational modules — Calendar and Schedule
+  now use the same `department_id` membership filter
 
 ## Non-goals (for the first cut)
 

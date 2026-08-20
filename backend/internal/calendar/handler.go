@@ -2,6 +2,7 @@ package calendar
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 
 	"name/backend/internal/auth"
 	"name/backend/internal/httpapi"
+	"name/backend/internal/workspace"
 )
 
 type Handler struct {
@@ -36,6 +38,8 @@ func Overlaps(aStart, aEnd, bStart, bEnd time.Time) bool {
 }
 
 // List returns events visible to the caller within an optional [from,to] window.
+// With department_id: organization-wide announcements plus events created by
+// members of that department (private events of other departments stay hidden).
 func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 	user, err := h.Auth.Authenticate(r)
 	if err != nil || h.DB == nil {
@@ -44,14 +48,38 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	from := r.URL.Query().Get("from")
 	to := r.URL.Query().Get("to")
-	rows, err := h.DB.Query(r.Context(), `
+	deptID := strings.TrimSpace(r.URL.Query().Get("department_id"))
+	if deptID != "" && !workspace.CanEnterDepartment(r.Context(), h.DB, h.Auth, user, deptID) {
+		httpapi.WriteError(w, http.StatusForbidden, "forbidden", "you cannot view calendar for this department")
+		return
+	}
+
+	query := `
 		SELECT e.id, e.title, e.description, e.starts_at, e.ends_at, e.all_day, e.visibility, COALESCE(e.created_by::text,''), COALESCE(u.display_name,'')
 		FROM calendar_events e LEFT JOIN users u ON u.id=e.created_by
-		WHERE e.organization_id=$1
-		  AND (e.visibility='organization' OR e.created_by=$2)
-		  AND ($3='' OR e.ends_at >= $3::timestamptz)
-		  AND ($4='' OR e.starts_at <= $4::timestamptz)
-		ORDER BY e.starts_at`, user.OrganizationID, user.ID, from, to)
+		WHERE e.organization_id=$1`
+	args := []any{user.OrganizationID}
+	argN := 2
+	if deptID != "" {
+		query += fmt.Sprintf(` AND (
+			e.visibility='organization'
+			OR (%s)
+		)`, workspace.MemberExistsSQL("e.created_by", argN))
+		args = append(args, deptID)
+		argN++
+	} else {
+		query += fmt.Sprintf(` AND (e.visibility='organization' OR e.created_by=$%d)`, argN)
+		args = append(args, user.ID)
+		argN++
+	}
+	query += fmt.Sprintf(` AND ($%d='' OR e.ends_at >= $%d::timestamptz)`, argN, argN)
+	args = append(args, from)
+	argN++
+	query += fmt.Sprintf(` AND ($%d='' OR e.starts_at <= $%d::timestamptz)`, argN, argN)
+	args = append(args, to)
+	query += ` ORDER BY e.starts_at`
+
+	rows, err := h.DB.Query(r.Context(), query, args...)
 	if err != nil {
 		httpapi.WriteError(w, http.StatusInternalServerError, "query_failed", "could not load events")
 		return

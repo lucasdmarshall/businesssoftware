@@ -559,8 +559,8 @@ function DepartmentWorkspaceShell({ workspace, view, onViewChange, onExit, syste
           : view === "finance" ? <DeptFinanceView departmentId={workspace.id} canManage={manage("finance")} hasSalary={Boolean(allowed.get("salary"))} hasBonus={Boolean(allowed.get("bonus"))} onOpen={(code) => onViewChange(code)} />
           : view === "attendance" ? <AttendanceView departmentId={workspace.id} canManage={manage("attendance") || Boolean(currentUser?.permissions?.includes("attendance.manage"))} canCompanySettings={Boolean(currentUser?.permissions?.includes("organization.manage"))} />
           : view === "leave" ? <LeaveView departmentId={workspace.id} canManage={manage("leave") || Boolean(currentUser?.permissions?.includes("leave.manage"))} currentEmail={currentUser?.email ?? ""} />
-          : view === "calendar" ? <CalendarView />
-          : view === "schedule" ? <ScheduleView canManage={manage("schedule") || Boolean(currentUser?.permissions?.includes("shifts.manage"))} />
+          : view === "calendar" ? <CalendarView departmentId={workspace.id} />
+          : view === "schedule" ? <ScheduleView departmentId={workspace.id} canManage={manage("schedule") || Boolean(currentUser?.permissions?.includes("shifts.manage"))} />
           : view === "tasks" ? <WorkView departmentId={workspace.id} />
           : view === "activity" ? <ActivityView departmentId={workspace.id} />
           : view === "settings" ? <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">{workspace.name}</p><h1>Settings.</h1><p className="lede">Department settings stay inside this workspace. Company-wide lookup lists remain under Company → Settings.</p></div></div></section>
@@ -1646,7 +1646,7 @@ function weekBounds(anchor: string) {
   return { from: monday.toISOString().slice(0, 10), to: sunday.toISOString().slice(0, 10) };
 }
 
-function ScheduleView({ canManage }: { canManage: boolean }) {
+function ScheduleView({ departmentId, canManage }: { departmentId?: string; canManage: boolean }) {
   type ShiftRow = LocalShift & { duration?: string; position_name?: string; employee_id?: string };
   const today = new Date().toISOString().slice(0, 10);
   const initialWeek = weekBounds(today);
@@ -1666,9 +1666,12 @@ function ScheduleView({ canManage }: { canManage: boolean }) {
       await syncPendingOperations(apiBase);
       const params = new URLSearchParams({ from: week.from, to: week.to, scope: canManage ? scope : "mine" });
       if (statusFilter !== "all") params.set("status", statusFilter);
+      if (departmentId) params.set("department_id", departmentId);
+      const weekQ = new URLSearchParams({ from: week.from, to: week.to, scope: canManage ? scope : "mine" });
+      if (departmentId) weekQ.set("department_id", departmentId);
       const [shiftRes, weekRes, settingsRes] = await Promise.all([
         fetch(`${apiBase}/shifts?${params}`, { credentials: "include" }),
-        fetch(`${apiBase}/shifts/week?from=${week.from}&to=${week.to}`, { credentials: "include" }),
+        fetch(`${apiBase}/shifts/week?${weekQ}`, { credentials: "include" }),
         fetch(`${apiBase}/attendance/settings`, { credentials: "include" }),
       ]);
       if (!shiftRes.ok) throw new Error("offline");
@@ -1683,15 +1686,23 @@ function ScheduleView({ canManage }: { canManage: boolean }) {
         setForm((current) => current.starts_at === "09:00" ? { ...current, starts_at: start } : current);
       }
       if (canManage) {
-        const usersRes = await fetch(`${apiBase}/users`, { credentials: "include" });
-        if (usersRes.ok) setUsers(await usersRes.json());
+        if (departmentId) {
+          const membersRes = await fetch(`${apiBase}/workspaces/departments/${departmentId}/members`, { credentials: "include" });
+          if (membersRes.ok) {
+            const members = await membersRes.json() as Array<{ user_id: string; display_name: string; email?: string }>;
+            setUsers(members.map((m) => ({ id: m.user_id, display_name: m.display_name, email: m.email ?? "", status: "active" })));
+          }
+        } else {
+          const usersRes = await fetch(`${apiBase}/users`, { credentials: "include" });
+          if (usersRes.ok) setUsers(await usersRes.json());
+        }
       }
     } catch {
       try { setShifts(await getLocalShifts()); } catch { setShifts([]); }
     }
   };
 
-  useEffect(() => { void load(); const onOnline = () => void load(); window.addEventListener("online", onOnline); return () => window.removeEventListener("online", onOnline); }, [canManage, scope, statusFilter, weekFrom]);
+  useEffect(() => { void load(); const onOnline = () => void load(); window.addEventListener("online", onOnline); return () => window.removeEventListener("online", onOnline); }, [canManage, scope, statusFilter, weekFrom, departmentId]);
 
   const createShift = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1741,8 +1752,8 @@ function ScheduleView({ canManage }: { canManage: boolean }) {
       <div className="page-heading">
         <div>
           <p className="eyebrow">Schedule</p>
-          <h1>Who works when.</h1>
-          <p className="lede">Week view with overlap and leave checks. Assign people when you have schedule manage access. Default start follows company check-in time.</p>
+          <h1>{departmentId ? "Who works here." : "Who works when."}</h1>
+          <p className="lede">{departmentId ? "Week view for this department only — other departments cannot see these shifts." : "Week view with overlap and leave checks. Assign people when you have schedule manage access. Default start follows company check-in time."}</p>
         </div>
       </div>
       {message && <p className="inline-message">{message}</p>}
@@ -1750,7 +1761,7 @@ function ScheduleView({ canManage }: { canManage: boolean }) {
       <div className="schedule-toolbar">
         <DatePicker value={weekFrom} onChange={(value) => setWeekFrom(weekBounds(value).from)} ariaLabel="Week of" />
         <span className="schedule-week-label">{week.from} → {week.to}</span>
-        {canManage && <Dropdown value={scope} options={SHIFT_SCOPE_OPTIONS} onChange={setScope} ariaLabel="Scope" />}
+        {canManage && !departmentId && <Dropdown value={scope} options={SHIFT_SCOPE_OPTIONS} onChange={setScope} ariaLabel="Scope" />}
         <Dropdown value={statusFilter} options={SHIFT_FILTER_OPTIONS} onChange={setStatusFilter} ariaLabel="Status filter" />
       </div>
 
@@ -2554,7 +2565,7 @@ const eventOverlapsDay = (event: CalendarEvent, day: Date) => {
 const eventClass = (event: CalendarEvent) => (event.visibility === "private" ? "event-private" : "event-organization");
 const hhmm = (iso: string) => { const d = new Date(iso); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
 
-function CalendarView() {
+function CalendarView({ departmentId }: { departmentId?: string }) {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [view, setView] = useState<CalView>("month");
   const [cursor, setCursor] = useState<Date>(() => startOfDay(new Date()));
@@ -2564,10 +2575,11 @@ function CalendarView() {
   const today = startOfDay(new Date());
 
   const load = async () => {
-    const response = await fetch(`${apiBase}/calendar/events`, { credentials: "include" });
+    const q = departmentId ? `?department_id=${encodeURIComponent(departmentId)}` : "";
+    const response = await fetch(`${apiBase}/calendar/events${q}`, { credentials: "include" });
     if (response.ok) setEvents(await response.json());
   };
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); }, [departmentId]);
 
   const openComposer = (date: Date, hour?: number) => {
     setForm((current) => ({ ...current, date: dateKey(date), start: hour != null ? `${pad2(hour)}:00` : current.start, end: hour != null ? `${pad2(Math.min(hour + 1, 23))}:00` : current.end }));
@@ -2600,7 +2612,7 @@ function CalendarView() {
     : "Agenda";
 
   return <section className="content-wrap calendar-wrap">
-    <div className="page-heading"><div><p className="eyebrow">Schedule</p><h1>Calendar.</h1><p className="lede">Shared events across the organization, with conflict detection on your own schedule.</p></div></div>
+    <div className="page-heading"><div><p className="eyebrow">{departmentId ? "Department calendar" : "Schedule"}</p><h1>Calendar.</h1><p className="lede">{departmentId ? "Events from this department’s people, plus organization-wide announcements." : "Shared events across the organization, with conflict detection on your own schedule."}</p></div></div>
     {message && <p className="inline-message">{message}</p>}
     <div className="calendar-toolbar">
       <div className="calendar-nav">

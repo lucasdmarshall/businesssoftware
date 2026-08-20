@@ -175,14 +175,13 @@ Completed in this milestone:
 - **Product decision: Department Workspaces** — each department is an isolated shell (Overview, Users, Access Control, Attendance, Calendar, Leave, Schedule, Salary, Bonus, Tasks, Activity, Settings, Finance). Other departments cannot see that data; company-wide access (`company.departments.access` / owner) can enter any workspace. Spec: `docs/DEPARTMENT_WORKSPACES.md`. Foundation APIs + UI shell in migration `030_department_workspaces.sql`
 - **Schedule chosen as third production-depth module:** week view, assign people, overlap + approved-leave conflicts, confirm/complete/cancel, duration + week hours rollup (migration `033_schedule_production.sql`)
 - **Finance suite foundation:** chart of accounts, journals, tax codes, customers, AP bills, payments, suite UI tabs — see `docs/FINANCE_SUITE.md` (migration `034_finance_suite.sql`)
-- **Department data isolation:** Leave / Attendance / Tasks / Activity accept `department_id` and filter to `user_departments` members; People UI assigns membership + head via `/user-departments`
+- **Department data isolation:** Leave / Attendance / Tasks / Activity / Calendar / Schedule accept `department_id` and filter to `user_departments` members; People UI assigns membership + head via `/user-departments`
 
 Next actions:
 
-1. Scope Calendar and Schedule the same way (`department_id` + membership).
-2. Workflow production depth (delegation, deadlines, reminders).
-3. Finance depth (aging reports, bank recon) and Phase 9 packaging.
-4. Sales/CRM and IT/Ops remain scaffold-level until scheduled for depth.
+1. Workflow production depth (delegation, deadlines, reminders).
+2. Finance depth (aging reports, bank recon) and Phase 9 packaging.
+3. Sales/CRM and IT/Ops remain scaffold-level until scheduled for depth.
 
 ## Active Work
 
