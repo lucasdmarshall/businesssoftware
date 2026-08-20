@@ -173,11 +173,16 @@ Next actions:
 
 Docker is not currently available on the development machine, so the local setup currently uses Homebrew PostgreSQL 14. The Docker Compose setup remains available for repeatable environments. The native macOS `.app` bundle is working. DMG packaging still fails in the macOS disk-image bundling step and is tracked separately.
 
+## Confirmed Release Targets
+
+- Supported desktop operating systems for the first release: **Windows and macOS**
+- Installer formats: Windows `.msi` (WiX) and `.exe` (NSIS, per-machine); macOS `.app` and `.dmg`
+- Desktop packaging: Tauri `bundle.targets: "all"`, built per-OS via the `release.yml` matrix (`windows-latest`, `macos-latest`)
+
 ## Important Decisions Pending
 
-- Supported desktop operating systems for the first release
 - Minimum supported PostgreSQL version
-- Installer format for each operating system
+- Code signing / notarization identities for Windows and macOS distribution
 - Local development container strategy
 - Office offline: local PostgreSQL over LAN
 - Device offline: SQLite cache plus Go sync layer

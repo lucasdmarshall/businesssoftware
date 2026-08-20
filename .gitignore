@@ -6,3 +6,8 @@ desktop/src-tauri/gen/
 .env
 data/backups/
 backend/data/
+
+# Release build artifacts (installers). Keep release/README.md tracked.
+release/**
+!release/README.md
+

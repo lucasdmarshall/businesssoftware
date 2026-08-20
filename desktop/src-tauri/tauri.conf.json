@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "identifier": "local.name.business",
   "build": {
+    "beforeDevCommand": "npm --prefix ../../frontend run dev",
+    "beforeBuildCommand": "npm --prefix ../../frontend install && npm --prefix ../../frontend run build",
     "frontendDist": "../../frontend/dist",
     "devUrl": "http://localhost:5173"
   },
@@ -13,8 +15,8 @@
         "title": "Name",
         "width": 1440,
         "height": 920,
-        "minWidth": 1080,
-        "minHeight": 720,
+        "minWidth": 900,
+        "minHeight": 640,
         "resizable": true
       }
     ],
@@ -26,6 +28,17 @@
     "active": true,
     "targets": "all",
     "category": "Business",
-    "shortDescription": "Self-hosted enterprise business software"
+    "shortDescription": "Self-hosted enterprise business software",
+    "longDescription": "Installable, offline-capable enterprise business operating system. Runs on the customer's own machine or private server.",
+    "publisher": "Name",
+    "copyright": "Copyright © Name. All rights reserved.",
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine"
+      }
+    }
   }
 }
