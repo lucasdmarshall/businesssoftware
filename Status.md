@@ -41,8 +41,11 @@ Reference: [Language and Design System](./Language-and-Design-System.md)
 ## Confirmed Product Principles
 
 - The company should be able to run its operations through the software.
-- Department dashboards and data must be protected by backend-enforced RBAC.
-- Job titles and permissions are separate concepts.
+- **Department workspaces are isolated:** each department has its own dashboard/modules; other departments cannot see that data by default.
+- Company-wide access (Owner / explicit `company.departments.access`) may enter and control any department workspace.
+- Department Access Control is visible only to department heads and company-wide access holders.
+- Job titles and permissions are separate concepts; seniority by title does not automatically grant system access.
+- Department dashboards and data must be protected by backend-enforced RBAC and membership.
 - Important actions must be auditable.
 - Approved work must continue without internet access.
 - Office offline mode uses local PostgreSQL through the company LAN.
@@ -169,13 +172,14 @@ Completed in this milestone:
 - Design system now documents required custom **Dropdown / DatePicker / TimePicker** controls in `Design.md` and `Language-and-Design-System.md`
 - **Attendance chosen as second production-depth module:** worked hours, check-in/out validation, leave-day block, remote status, manager today rollup + date filter, durable correction history with notifications (migration `028_attendance_production.sql`)
 - **Attendance desk + company check-in policy:** company-level expected check-in time (`organization.manage` only — not department heads); manager Name/Position/Employee ID desk with Check in / Absent; recent table (5 rows default) with Early by / Late by auto-calc `hh:mm:ss` (migration `029_attendance_company_policy.sql`)
+- **Product decision: Department Workspaces** — each department is an isolated shell (Overview, Users, Access Control, Attendance, Calendar, Leave, Schedule, Salary, Bonus, Tasks, Activity, Settings, Finance). Other departments cannot see that data; company-wide access (`company.departments.access` / owner) can enter any workspace. Spec: `docs/DEPARTMENT_WORKSPACES.md`. Foundation APIs + UI shell in migration `030_department_workspaces.sql`
 
 Next actions:
 
-1. Pick the next module for production depth (Finance expenses, Schedule/shifts, or CRM pipeline).
-2. Workflow approval reminders/deadlines and delegated approval.
-3. Phase 9 packaging, licensing, and installer architecture.
-4. Sales/CRM and IT/Ops remain scaffold-level until scheduled for depth.
+1. Finish data isolation: scope Leave/Attendance/Tasks/Activity queries by department membership (not only workspace nav).
+2. Wire People UI to assign department membership + head flag.
+3. Continue Schedule / company Finance suite production depth after department workspaces land.
+4. Phase 9 packaging, licensing, and installer architecture.
 
 ## Active Work
 

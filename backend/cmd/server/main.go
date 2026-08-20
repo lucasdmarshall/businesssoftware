@@ -33,6 +33,7 @@ import (
 	"name/backend/internal/sync"
 	"name/backend/internal/tasks"
 	"name/backend/internal/workflow"
+	"name/backend/internal/workspace"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -180,6 +181,16 @@ func main() {
 	mux.Handle("GET /api/v1/files", authHandler.RequirePermission("organization.read", http.HandlerFunc(orgStructureHandler.Files)))
 	dashboardHandler := dashboard.Handler{DB: pool, Auth: authHandler}
 	mux.HandleFunc("GET /api/v1/dashboard/summary", dashboardHandler.Summary)
+	workspaceHandler := workspace.Handler{DB: pool, Auth: authHandler}
+	mux.HandleFunc("GET /api/v1/workspaces/departments", workspaceHandler.List)
+	mux.HandleFunc("GET /api/v1/workspaces/departments/{id}", workspaceHandler.Get)
+	mux.HandleFunc("GET /api/v1/workspaces/departments/{id}/members", workspaceHandler.Members)
+	mux.HandleFunc("GET /api/v1/workspaces/departments/{id}/access", workspaceHandler.Access)
+	mux.HandleFunc("POST /api/v1/workspaces/departments/{id}/access", workspaceHandler.Access)
+	mux.HandleFunc("GET /api/v1/workspaces/departments/{id}/salaries", workspaceHandler.Salaries)
+	mux.HandleFunc("POST /api/v1/workspaces/departments/{id}/salaries", workspaceHandler.Salaries)
+	mux.HandleFunc("GET /api/v1/workspaces/departments/{id}/bonuses", workspaceHandler.Bonuses)
+	mux.HandleFunc("POST /api/v1/workspaces/departments/{id}/bonuses", workspaceHandler.Bonuses)
 	financeHandler := finance.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/vendors", authHandler.RequirePermission("finance.read", http.HandlerFunc(financeHandler.Vendors)))
 	mux.Handle("POST /api/v1/vendors", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.Vendors)))
@@ -467,17 +478,23 @@ func userDepartmentsHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.H
 			UserID       string `json:"user_id"`
 			DepartmentID string `json:"department_id"`
 			Primary      bool   `json:"is_primary"`
+			IsHead       bool   `json:"is_head"`
 		}
 		if json.NewDecoder(r.Body).Decode(&input) != nil || input.UserID == "" || input.DepartmentID == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id and department_id are required"})
 			return
 		}
-		result, err := pool.Exec(r.Context(), `INSERT INTO user_departments (user_id,department_id,is_primary) SELECT u.id,d.id,$3 FROM users u JOIN departments d ON d.organization_id=u.organization_id WHERE u.id=$1 AND d.id=$2 AND u.organization_id=$4 ON CONFLICT (user_id,department_id) DO UPDATE SET is_primary=EXCLUDED.is_primary`, input.UserID, input.DepartmentID, input.Primary, user.OrganizationID)
+		result, err := pool.Exec(r.Context(), `
+			INSERT INTO user_departments (user_id,department_id,is_primary,is_head)
+			SELECT u.id,d.id,$3,$4 FROM users u JOIN departments d ON d.organization_id=u.organization_id
+			WHERE u.id=$1 AND d.id=$2 AND u.organization_id=$5
+			ON CONFLICT (user_id,department_id) DO UPDATE SET is_primary=EXCLUDED.is_primary, is_head=EXCLUDED.is_head`,
+			input.UserID, input.DepartmentID, input.Primary, input.IsHead, user.OrganizationID)
 		if err != nil || result.RowsAffected() == 0 {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user or department does not belong to this organization"})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "assigned"})
+		writeJSON(w, http.StatusOK, map[string]any{"status": "assigned", "is_head": input.IsHead})
 	}
 }
 
