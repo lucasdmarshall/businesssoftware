@@ -572,7 +572,7 @@ func (h Handler) Instances(w http.ResponseWriter, r *http.Request) {
 		JOIN workflow_definitions d ON d.id=i.definition_id
 		JOIN users u ON u.id=i.submitted_by
 		LEFT JOIN workflow_steps cs ON cs.definition_id=i.definition_id AND cs.step_order=i.current_step_order
-		WHERE i.organization_id=$1` + filters + ` ORDER BY i.updated_at DESC LIMIT 500`
+		WHERE i.organization_id=$1` + filters + ` ORDER BY CASE WHEN i.status='in_review' AND i.due_at IS NOT NULL AND i.due_at < NOW() THEN 0 ELSE 1 END, i.due_at NULLS LAST, i.updated_at DESC LIMIT 500`
 	rows, err := h.DB.Query(r.Context(), query, args...)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load requests"})
