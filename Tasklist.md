@@ -19,7 +19,7 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Confirm design system direction
 - [x] Create source repository structure
 - [x] Add root README and contributor guide
-- [ ] Add engineering `AGENTS.md`
+- [x] Read the LukeLang `AGENTS.md` playbook before writing any LukeLang (reactive engine) code — canonical repo: https://github.com/lucasdmarshall/LukeLang
 - [ ] Define development commands and scripts
 - [ ] Define environment variable conventions
 - [x] Define local development setup
@@ -261,9 +261,22 @@ This is the master implementation checklist for the installable enterprise busin
 
 ## Phase 10 — LukeLang Evaluation Track
 
+LukeLang is Build-first (`luke BUILD` → native/WASM, no GC). The reactive
+**Live Graph** tier is the beachhead we would use for reactive dashboards, live
+analytics, and realtime notifications. Before writing any LukeLang, read the
+LukeLang repo's `AGENTS.md` and copy from its canonical examples rather than
+inventing syntax:
+
+- Reactive core: `examples/build/reactive_core.luke` (`REMEMBER`, `THE x IS …`, `BEGIN REACTIVE BATCH`, `CHANGE`)
+- Live Graph server: `examples/build/live_graph_server.luke` (`WATCH … FROM db`, `PUSH WATCH … ON req`)
+- Live Graph client: `examples/build/live_graph_client.luke` (`WATCH … FROM url`, `BIND`, `WHEN REACTIVE … CHANGES`)
+- Backend + DB: `examples/build/backend_api.luke`, `examples/build/pg_api.luke` (`IMPORT std/server`, `std/pg`, `httpServe`, `pgQueryBind`)
+
+LukeLang is compiled and bundled into the product; customers never install it.
+
 - [ ] Define LukeLang integration boundary
-- [ ] Add LukeLang language guide for AI-assisted development
-- [ ] Build reactive dashboard proof of concept
+- [ ] Add LukeLang language guide for AI-assisted development (point to LukeLang `AGENTS.md` + canonical examples)
+- [ ] Build reactive dashboard proof of concept (Live Graph: Postgres CDC → PUSH WATCH → browser paint)
 - [ ] Build realtime notification proof of concept
 - [ ] Add compiler verification to CI
 - [ ] Add cross-platform LukeLang build matrix
