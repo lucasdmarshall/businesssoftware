@@ -55,7 +55,13 @@ APIs:
 - `POST /api/v1/credentials/generate` — company People (`users.manage`)
 - `POST /api/v1/workspaces/departments/{id}/credentials` — department **credentials** module manage
 
-Login: `POST /api/v1/auth/login` with `{ "username", "password" }` (email still accepted as fallback).
+Login: `POST /api/v1/auth/login` with `{ "username", "password" }`. The `username` field accepts:
+
+- company-issued username (`lucas_admin_000001`)
+- EMP ID (`ADM000001`)
+- email (including the generated `@internal.local` address)
+
+Password is trimmed; email match is case-insensitive.
 
 ## Credentials module
 

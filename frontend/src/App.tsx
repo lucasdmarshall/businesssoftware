@@ -744,7 +744,7 @@ function DeptCredentialsView({ departmentId, canManage }: { departmentId: string
             <span className="record-avatar department-avatar"><KeyRound size={15} /></span>
             <span className="record-copy">
               <strong>{issued.display_name}</strong>
-              <small>username <code>{issued.username}</code> · password <code>{issued.password}</code> · employee ID <code>{issued.employee_id}</code></small>
+              <small>login username <code>{issued.username}</code> · password <code>{issued.password}</code> · EMP ID <code>{issued.employee_id}</code> (also works as login)</small>
             </span>
           </div>
         </div>
@@ -3465,7 +3465,7 @@ function PeopleView() {
           <button className="primary-button" type="submit">Generate credentials</button>
         </div>
       </form>
-      {issued && <div className="record-list" style={{ marginTop: 16 }}><div className="record-row"><span className="record-avatar department-avatar"><KeyRound size={15} /></span><span className="record-copy"><strong>{issued.display_name}</strong><small>username <code>{issued.username}</code> · password <code>{issued.password}</code> · employee ID <code>{issued.employee_id}</code></small></span></div></div>}
+      {issued && <div className="record-list" style={{ marginTop: 16 }}><div className="record-row"><span className="record-avatar department-avatar"><KeyRound size={15} /></span><span className="record-copy"><strong>{issued.display_name}</strong><small>login username <code>{issued.username}</code> · password <code>{issued.password}</code> · EMP ID <code>{issued.employee_id}</code> (also works as login)</small></span></div></div>}
     </div>
     <div className="rbac-panel">
       <div className="section-heading"><div><p className="eyebrow">Department membership</p><h2>{memberships.length} assignments</h2></div></div>
@@ -3581,11 +3581,11 @@ function AuthScreen({ mode, theme, onThemeToggle, onAuthenticated }: { mode: "se
 
   return <main className="auth-shell">
     <section className="auth-panel">
-      <div className="auth-heading"><div className="brand-mark">N</div><p className="eyebrow">Name · Private workspace</p><h1>{mode === "setup" ? "Set up your company." : "Welcome back."}</h1><p className="lede">{mode === "setup" ? "Create the first owner account for this installation." : "Sign in with the username and password issued by your company."}</p></div>
+      <div className="auth-heading"><div className="brand-mark">N</div><p className="eyebrow">Name · Private workspace</p><h1>{mode === "setup" ? "Set up your company." : "Welcome back."}</h1><p className="lede">{mode === "setup" ? "Create the first owner account for this installation." : "Sign in with your company-issued username (e.g. lucas_admin_000001) or EMP ID (e.g. ADM000001), plus password."}</p></div>
       <form className="auth-form" onSubmit={submit}>
         {mode === "setup" && <><label>Company name<input value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} placeholder="Acme Company" required /></label><label>Company slug<input value={organizationSlug} onChange={(event) => setOrganizationSlug(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))} placeholder="acme-company" required /></label><label>Your name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Lucas Marshall" required /></label><label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" required /></label><label>Username<input value={username} onChange={(event) => setUsername(event.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, ""))} placeholder="optional — defaults from email" /></label></>}
-        {mode === "login" && <label>Username<input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="company-issued username" autoComplete="username" required /></label>}
-        <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 12 characters" minLength={12} required /></label>
+        {mode === "login" && <label>Username or EMP ID<input value={username} onChange={(event) => setUsername(event.target.value.trim())} placeholder="lucas_admin_000001 or ADM000001" autoComplete="username" required /></label>}
+        <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="e.g. password000001" minLength={12} required /></label>
         {mfaRequired && <label>Verification code<input inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(event) => setCode(event.target.value.replace(/[^0-9]/g, "").slice(0, 6))} placeholder="6-digit code" required /></label>}
         {error && <p className="form-error" role="alert">{error}</p>}
         <button className="primary-button submit-button" type="submit" disabled={submitting}>{submitting ? "Connecting…" : mode === "setup" ? "Create workspace" : mfaRequired ? "Verify & sign in" : "Sign in"}</button>

@@ -157,15 +157,24 @@ func (h Handler) Login(w http.ResponseWriter, r *http.Request) {
 	if loginID == "" {
 		loginID = strings.TrimSpace(strings.ToLower(input.Email))
 	}
-	if loginID == "" || input.Password == "" {
+	password := strings.TrimSpace(input.Password)
+	if loginID == "" || password == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
 		return
 	}
 	var userID, organizationID, passwordHash string
+	// Accept company-issued username, email, or EMP ID (employee_profiles.employee_code).
 	if err := h.DB.QueryRow(r.Context(), `
-		SELECT id, organization_id, password_hash FROM users
-		WHERE status = 'active' AND (lower(COALESCE(username,'')) = $1 OR email = $1)`,
-		loginID).Scan(&userID, &organizationID, &passwordHash); err != nil || passwordHash == "" || !VerifyPassword(input.Password, passwordHash) {
+		SELECT u.id, u.organization_id, u.password_hash
+		FROM users u
+		LEFT JOIN employee_profiles ep ON ep.user_id = u.id
+		WHERE u.status = 'active' AND (
+			lower(COALESCE(u.username, '')) = $1
+			OR lower(u.email) = $1
+			OR lower(COALESCE(ep.employee_code, '')) = $1
+		)
+		LIMIT 1`,
+		loginID).Scan(&userID, &organizationID, &passwordHash); err != nil || passwordHash == "" || !VerifyPassword(password, passwordHash) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
 		return
 	}
