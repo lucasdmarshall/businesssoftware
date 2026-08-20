@@ -43,7 +43,10 @@ func scopeCondition(scope string) string {
 	case "department":
 		return `EXISTS (SELECT 1 FROM user_departments cur JOIN user_departments tgt ON tgt.department_id=cur.department_id WHERE cur.user_id=$2 AND tgt.user_id=COALESCE(t.assigned_to,t.created_by))`
 	default:
-		return `TRUE`
+		// Organization scope has no per-user filter, but $2 (the user id) is
+		// always bound by the caller, so the predicate must still reference it
+		// or Postgres rejects the extra bind parameter. This is always true.
+		return `$2::uuid IS NOT NULL`
 	}
 }
 
