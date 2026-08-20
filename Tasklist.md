@@ -20,12 +20,12 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Create source repository structure
 - [x] Add root README and contributor guide
 - [x] Read the LukeLang `AGENTS.md` playbook before writing any LukeLang (reactive engine) code — canonical repo: https://github.com/lucasdmarshall/LukeLang
-- [ ] Define development commands and scripts
-- [ ] Define environment variable conventions
+- [x] Define development commands and scripts (root `Makefile`, `docs/DEVELOPMENT.md`)
+- [x] Define environment variable conventions (`docs/DEVELOPMENT.md`, `.env.example`)
 - [x] Define local development setup
-- [ ] Add formatting and linting
-- [ ] Add unit test and integration test foundations
-- [ ] Add CI pipeline
+- [x] Add formatting and linting (gofmt/go vet; ESLint + Prettier for the frontend)
+- [x] Add unit test and integration test foundations (Go `password_test.go`; Vitest `sync-transform.test.ts`)
+- [x] Add CI pipeline (`.github/workflows/ci.yml`: backend + frontend gates)
 
 ## Phase 1 — Application Shell
 
@@ -42,9 +42,9 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Install Tauri CLI
 - [x] Verify Tauri Rust project with `cargo check`
 - [x] Build macOS `.app` bundle
-- [ ] Fix macOS `.dmg` packaging
-- [ ] Add responsive layout behavior
-- [ ] Add keyboard navigation and accessibility baseline
+- [!] Fix macOS `.dmg` packaging (blocked: disk-image bundling step fails; `.app` bundle works)
+- [x] Add responsive layout behavior (tablet + phone breakpoints; sidebar folds, grids collapse)
+- [x] Add keyboard navigation and accessibility baseline (skip link, `aria-current` nav, labelled status, focus-visible outlines)
 
 ## Phase 2 — Database and Platform Core
 

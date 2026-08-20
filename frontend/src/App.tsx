@@ -37,6 +37,8 @@ type WorkflowInstance = { id: string; definition_id: string; definition_name: st
 
 const workflowStatusClass: Record<string, string> = { in_review: "leave-pending", approved: "leave-approved", rejected: "leave-rejected", cancelled: "leave-rejected", draft: "" };
 
+const viewForLabel = (label: string): string => label === "People" ? "people" : label === "Work" ? "work" : label === "Approvals" ? "approvals" : label === "Attendance" ? "attendance" : label === "Leave" ? "leave" : label === "Schedule" ? "schedule" : label === "Activity" ? "activity" : "overview";
+
 const apiBase = "http://localhost:8080/api/v1";
 
 const navigation = [
@@ -140,6 +142,7 @@ function App() {
 
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">Skip to content</a>
       <aside className="sidebar">
         <div className="brand-mark">N</div>
         <div className="workspace-switcher">
@@ -150,12 +153,16 @@ function App() {
 
         <nav className="primary-nav" aria-label="Primary navigation">
           <p className="eyebrow">Workspace</p>
-          {navigation.filter(({ permission }) => !permission || !currentUser?.permissions?.length || currentUser.permissions.includes(permission)).map(({ label, icon: Icon, active }) => (
-            <button className={`nav-item ${(activeView === "overview" && active) || (activeView === "people" && label === "People") || (activeView === "work" && label === "Work") || (activeView === "approvals" && label === "Approvals") || (activeView === "attendance" && label === "Attendance") || (activeView === "leave" && label === "Leave") || (activeView === "schedule" && label === "Schedule") || (activeView === "activity" && label === "Activity") ? "active" : ""}`} key={label} type="button" onClick={() => setActiveView(label === "People" ? "people" : label === "Work" ? "work" : label === "Approvals" ? "approvals" : label === "Attendance" ? "attendance" : label === "Leave" ? "leave" : label === "Schedule" ? "schedule" : label === "Activity" ? "activity" : "overview")}>
-              <Icon size={17} strokeWidth={1.8} />
-              <span>{label}</span>
-            </button>
-          ))}
+          {navigation.filter(({ permission }) => !permission || !currentUser?.permissions?.length || currentUser.permissions.includes(permission)).map(({ label, icon: Icon }) => {
+            const view = viewForLabel(label);
+            const isActive = activeView === view;
+            return (
+              <button className={`nav-item ${isActive ? "active" : ""}`} aria-current={isActive ? "page" : undefined} key={label} type="button" onClick={() => setActiveView(view)}>
+                <Icon size={17} strokeWidth={1.8} aria-hidden="true" />
+                <span>{label}</span>
+              </button>
+            );
+          })}
         </nav>
 
         <div className="sidebar-footer">
@@ -171,12 +178,12 @@ function App() {
         </div>
       </aside>
 
-      <main className="main-content">
+      <main className="main-content" id="main-content">
         <header className="topbar">
           <div className="breadcrumb">Overview <span>/</span> Workspace</div>
           <div className="topbar-actions">
-            <button className="search-button" type="button"><Search size={16} /> Search <kbd>⌘ K</kbd></button>
-            <span className={`status-dot ${systemHealth.status !== "ok" ? "offline" : ""}`} title={`Backend: ${systemHealth.status} · Database: ${systemHealth.database}`} />
+            <button className="search-button" type="button"><Search size={16} aria-hidden="true" /> Search <kbd>⌘ K</kbd></button>
+            <span className={`status-dot ${systemHealth.status !== "ok" ? "offline" : ""}`} role="status" aria-label={`Backend ${systemHealth.status}, database ${systemHealth.database}`} title={`Backend: ${systemHealth.status} · Database: ${systemHealth.database}`} />
           </div>
         </header>
 

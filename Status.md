@@ -143,6 +143,8 @@ Completed in this milestone:
 - Bundled Plus Jakarta Sans locally via `@fontsource` instead of the Google Fonts CDN so typography survives a fully offline installation
 - Reworked responsive layout: removed the `min-width: 1080px` contradiction and added tablet (1080px) and phone (720px) breakpoints that stack the sidebar and collapse every multi-column grid
 - Frontend now consumes the `sync/pull` change feed (`pullRemoteChanges`) after login and workspace load, writing tasks, leave, shifts, and attendance into the local SQLite caches so a device keeps other clients' synced changes when it later goes offline
+- Phase 0 engineering foundation completed: root `Makefile` and `docs/DEVELOPMENT.md` (commands + environment conventions), gofmt/go vet plus ESLint + Prettier for the frontend, a Go test foundation (`password_test.go`) and a Vitest test foundation (`sync-transform.test.ts`), and a GitHub Actions CI pipeline running both stacks' gates
+- Phase 1 shell finished except blocked `.dmg` packaging: responsive tablet/phone layout and an accessibility baseline (skip link, `aria-current` navigation, labelled connection status, focus-visible outlines)
 
 Next actions:
 
