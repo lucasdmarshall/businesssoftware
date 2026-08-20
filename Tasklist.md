@@ -141,7 +141,8 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Add attendance screen with recent history
 - [x] Add manager attendance views
 - [x] Add attendance correction workflow
-- [ ] Add shifts depth, corrections history UI polish, and payroll rules
+- [x] Attendance production depth: hours, validation, today rollup, correction history, remote status
+- [ ] Add shifts depth and payroll rules
 
 ### Leave (first production-ready business module)
 

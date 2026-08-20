@@ -189,6 +189,12 @@ function useLookup(category: string): DropdownOption[] {
 
 // Shared option sets for the custom Dropdown, replacing inline <option> lists.
 const PRIORITY_OPTIONS: DropdownOption[] = [{ value: "low", label: "Low priority", color: "#777975" }, { value: "normal", label: "Normal priority", color: "#3b6ea5" }, { value: "high", label: "High priority", color: "#aa6c29" }, { value: "urgent", label: "Urgent", color: "#b3453b" }];
+const ATTENDANCE_STATUS_OPTIONS: DropdownOption[] = [
+  { value: "present", label: "Present", color: "#2d6a58" },
+  { value: "remote", label: "Remote", color: "#3b6ea5" },
+  { value: "leave", label: "Leave", color: "#aa6c29" },
+  { value: "absent", label: "Absent", color: "#b3453b" },
+];
 const RECURRENCE_OPTIONS: DropdownOption[] = [{ value: "", label: "No repeat" }, { value: "daily", label: "Daily" }, { value: "weekly", label: "Weekly" }, { value: "monthly", label: "Monthly" }];
 const TASK_SCOPE_OPTIONS: DropdownOption[] = [{ value: "own", label: "My tasks" }, { value: "team", label: "Team tasks" }, { value: "department", label: "Department tasks" }, { value: "organization", label: "All company tasks" }];
 const DASH_SCOPE_OPTIONS: DropdownOption[] = [{ value: "own", label: "My work" }, { value: "team", label: "My team" }, { value: "department", label: "My department" }, { value: "organization", label: "Whole company" }];
@@ -389,7 +395,7 @@ function App() {
           </div>
         </header>
 
-        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "projects" ? <ProjectsView /> : activeView === "approvals" ? <WorkflowView /> : activeView === "finance" ? <FinanceView /> : activeView === "hr" ? <HRView /> : activeView === "sales" ? <SalesView /> : activeView === "it" ? <ITView /> : activeView === "reports" ? <ReportsView /> : activeView === "calendar" ? <CalendarView /> : activeView === "attendance" ? <AttendanceView /> : activeView === "leave" ? <LeaveView canManage={Boolean(currentUser?.permissions?.includes("leave.manage"))} currentEmail={currentUser?.email ?? ""} /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : activeView === "settings" ? <SettingsView /> : <section className="content-wrap">
+        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "projects" ? <ProjectsView /> : activeView === "approvals" ? <WorkflowView /> : activeView === "finance" ? <FinanceView /> : activeView === "hr" ? <HRView /> : activeView === "sales" ? <SalesView /> : activeView === "it" ? <ITView /> : activeView === "reports" ? <ReportsView /> : activeView === "calendar" ? <CalendarView /> : activeView === "attendance" ? <AttendanceView canManage={Boolean(currentUser?.permissions?.includes("attendance.manage"))} /> : activeView === "leave" ? <LeaveView canManage={Boolean(currentUser?.permissions?.includes("leave.manage"))} currentEmail={currentUser?.email ?? ""} /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : activeView === "settings" ? <SettingsView /> : <section className="content-wrap">
           <div className="page-heading">
             <div>
               <p className="eyebrow">Wednesday, 20 August 2026</p>
@@ -536,11 +542,22 @@ function WorkView() {
   </section>;
 }
 
-function AttendanceView() {
-  const [records, setRecords] = useState<LocalAttendance[]>([]);
-  const [managerRecords, setManagerRecords] = useState<Array<LocalAttendance & { display_name?: string }>>([]);
-  const [users, setUsers] = useState<Array<{ id: string; display_name: string }>>([]);
-  const [correction, setCorrection] = useState({ user_id: "", work_date: new Date().toISOString().slice(0, 10), check_in_at: "", check_out_at: "", status: "present", note: "" });
+function formatTime(value: string | null | undefined) {
+  if (!value) return "—";
+  return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function AttendanceView({ canManage }: { canManage: boolean }) {
+  const [records, setRecords] = useState<Array<LocalAttendance & { hours?: number; display_name?: string }>>([]);
+  const [managerRecords, setManagerRecords] = useState<Array<LocalAttendance & { hours?: number; display_name?: string }>>([]);
+  const [corrections, setCorrections] = useState<Array<{
+    id: string; display_name?: string; corrector_name?: string; work_date: string; previous_status: string; status: string;
+    previous_check_in_at?: string | null; previous_check_out_at?: string | null; check_in_at?: string | null; check_out_at?: string | null; note: string; created_at: string;
+  }>>([]);
+  const [todaySummary, setTodaySummary] = useState<{ work_date: string; present_count: number; remote_count: number; leave_count: number; absent_count: number; checked_in: number; checked_out: number; still_working: number } | null>(null);
+  const [users, setUsers] = useState<UserRecord[]>([]);
+  const [teamDate, setTeamDate] = useState(new Date().toISOString().slice(0, 10));
+  const [correction, setCorrection] = useState({ user_id: "", work_date: new Date().toISOString().slice(0, 10), check_in_at: "09:00", check_out_at: "17:00", status: "present", note: "" });
   const [message, setMessage] = useState("");
   const today = new Date().toISOString().slice(0, 10);
   const todayRecord = records.find((record) => record.work_date === today);
@@ -550,17 +567,27 @@ function AttendanceView() {
       await syncPendingOperations(apiBase);
       const response = await fetch(`${apiBase}/attendance`, { credentials: "include" });
       if (!response.ok) throw new Error("offline");
-      const remote = await response.json() as LocalAttendance[];
-      setRecords(remote); await cacheAttendance(remote);
-      const managerResponse = await fetch(`${apiBase}/attendance/organization`, { credentials: "include" });
-      if (managerResponse.ok) {
-        setManagerRecords(await managerResponse.json());
-        const usersResponse = await fetch(`${apiBase}/users`, { credentials: "include" });
-        if (usersResponse.ok) setUsers(await usersResponse.json());
+      const remote = await response.json() as Array<LocalAttendance & { hours?: number }>;
+      setRecords(remote);
+      await cacheAttendance(remote);
+      if (canManage) {
+        const [orgRes, corrRes, todayRes, usersRes] = await Promise.all([
+          fetch(`${apiBase}/attendance/organization?date=${teamDate}`, { credentials: "include" }),
+          fetch(`${apiBase}/attendance/corrections`, { credentials: "include" }),
+          fetch(`${apiBase}/attendance/today?date=${teamDate}`, { credentials: "include" }),
+          fetch(`${apiBase}/users`, { credentials: "include" }),
+        ]);
+        if (orgRes.ok) setManagerRecords(await orgRes.json());
+        if (corrRes.ok) setCorrections(await corrRes.json());
+        if (todayRes.ok) setTodaySummary(await todayRes.json());
+        if (usersRes.ok) setUsers(await usersRes.json());
       }
-    } catch { try { setRecords(await getLocalAttendance()); } catch { setRecords([]); } }
+    } catch {
+      try { setRecords(await getLocalAttendance()); } catch { setRecords([]); }
+    }
   };
-  useEffect(() => { void load(); const onOnline = () => void load(); window.addEventListener("online", onOnline); return () => window.removeEventListener("online", onOnline); }, []);
+
+  useEffect(() => { void load(); const onOnline = () => void load(); window.addEventListener("online", onOnline); return () => window.removeEventListener("online", onOnline); }, [canManage, teamDate]);
 
   const mark = async (kind: "check_in" | "check_out") => {
     const now = new Date().toISOString();
@@ -568,22 +595,141 @@ function AttendanceView() {
     if (kind === "check_in") local.check_in_at = now; else local.check_out_at = now;
     try {
       const response = await fetch(`${apiBase}/attendance/${kind.replace("_", "-")}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: local.id, work_date: today, at: now }) });
-      if (!response.ok) throw new Error("offline");
-      const saved = await response.json() as LocalAttendance; setRecords((current) => [saved, ...current.filter((item) => item.work_date !== today)]); await cacheAttendance([saved]); setMessage(kind === "check_in" ? "Checked in" : "Checked out");
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+        setMessage(body?.error?.message ?? "Could not save attendance");
+        return;
+      }
+      const saved = await response.json() as LocalAttendance & { hours?: number };
+      setRecords((current) => [saved, ...current.filter((item) => item.work_date !== today)]);
+      await cacheAttendance([saved]);
+      setMessage(kind === "check_in" ? "Checked in" : `Checked out · ${saved.hours ?? 0}h`);
+      void load();
     } catch {
       await queueOperation({ id: `attendance:${today}:${kind}`, entity: "attendance", action: kind, payload: { id: local.id, work_date: today, at: now, note: "" }, createdAt: now });
-      await cacheAttendance([local]); setRecords((current) => [local, ...current.filter((item) => item.work_date !== today)]); setMessage("Saved offline · will sync when the server is reachable");
+      await cacheAttendance([local]);
+      setRecords((current) => [local, ...current.filter((item) => item.work_date !== today)]);
+      setMessage("Saved offline · will sync when the server is reachable");
     }
+  };
+
+  const setStatus = async (status: string) => {
+    const response = await fetch(`${apiBase}/attendance/status`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ work_date: today, status }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+      setMessage(body?.error?.message ?? "Could not update status");
+      return;
+    }
+    setMessage(`Marked ${status}`);
+    void load();
   };
 
   const submitCorrection = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const response = await fetch(`${apiBase}/attendance/corrections`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...correction, check_in_at: correction.check_in_at ? new Date(`${correction.work_date}T${correction.check_in_at}`).toISOString() : null, check_out_at: correction.check_out_at ? new Date(`${correction.work_date}T${correction.check_out_at}`).toISOString() : null }) });
-    if (!response.ok) { setMessage("Correction could not be saved"); return; }
-    setMessage("Attendance corrected"); setCorrection((current) => ({ ...current, check_in_at: "", check_out_at: "", note: "" })); void load();
+    const response = await fetch(`${apiBase}/attendance/corrections`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...correction,
+        check_in_at: correction.check_in_at ? new Date(`${correction.work_date}T${correction.check_in_at}:00`).toISOString() : null,
+        check_out_at: correction.check_out_at ? new Date(`${correction.work_date}T${correction.check_out_at}:00`).toISOString() : null,
+      }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+      setMessage(body?.error?.message ?? "Correction could not be saved");
+      return;
+    }
+    setMessage("Attendance corrected");
+    setCorrection((current) => ({ ...current, note: "" }));
+    void load();
   };
 
-  return <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">Attendance</p><h1>Be present, clearly.</h1><p className="lede">Check-in and check-out remain available when the company server is offline.</p></div></div>{message && <p className="inline-message">{message}</p>}<div className="attendance-today"><div><p className="eyebrow">Today · {today}</p><h2>{todayRecord?.check_in_at ? todayRecord.check_out_at ? "Workday complete" : "Currently working" : "Not checked in"}</h2></div><div className="attendance-actions"><button className="primary-button" type="button" onClick={() => void mark("check_in")} disabled={Boolean(todayRecord?.check_in_at)}>Check in</button><button className="text-button" type="button" onClick={() => void mark("check_out")} disabled={!todayRecord?.check_in_at || Boolean(todayRecord.check_out_at)}>Check out</button></div></div><div className="section-heading task-heading"><div><p className="eyebrow">History</p><h2>Recent attendance</h2></div></div><div className="record-list">{records.map((record) => <div className="record-row" key={record.id}><span className="record-avatar"><Clock3 size={15} /></span><span className="record-copy"><strong>{record.work_date}</strong><small>{record.check_in_at ? new Date(record.check_in_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"} → {record.check_out_at ? new Date(record.check_out_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</small></span><span className="status-pill">{record.status}</span></div>)}</div>{managerRecords.length > 0 && <><div className="section-heading task-heading"><div><p className="eyebrow">Manager view</p><h2>Team attendance</h2></div></div><div className="record-list">{managerRecords.map((record) => <div className="record-row" key={record.id}><span className="record-avatar"><UsersRound size={15} /></span><span className="record-copy"><strong>{record.display_name}</strong><small>{record.work_date} · {record.check_in_at ? new Date(record.check_in_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"} → {record.check_out_at ? new Date(record.check_out_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</small></span><span className="status-pill">{record.status}</span></div>)}</div><form className="compact-form attendance-correction" onSubmit={submitCorrection}><p className="eyebrow">Correction</p><Dropdown value={correction.user_id} options={[{ value: "", label: "Select person" }, ...users.map((user) => ({ value: user.id, label: user.display_name }))]} onChange={(value) => setCorrection({ ...correction, user_id: value })} ariaLabel="Person" placeholder="Select person" /><DatePicker value={correction.work_date} onChange={(value) => setCorrection({ ...correction, work_date: value })} ariaLabel="Work date" /><div className="form-grid"><TimePicker value={correction.check_in_at} onChange={(value) => setCorrection({ ...correction, check_in_at: value })} ariaLabel="Check in" /><TimePicker value={correction.check_out_at} onChange={(value) => setCorrection({ ...correction, check_out_at: value })} ariaLabel="Check out" /><input placeholder="Reason or note" value={correction.note} onChange={(event) => setCorrection({ ...correction, note: event.target.value })} /></div><button className="primary-button" type="submit">Save correction</button></form></>}</section>;
+  const hoursLabel = todayRecord?.check_in_at && todayRecord?.check_out_at
+    ? `${(todayRecord as { hours?: number }).hours ?? "—"}h logged`
+    : todayRecord?.check_in_at ? "In progress" : "No hours yet";
+
+  return <section className="content-wrap">
+    <div className="page-heading">
+      <div>
+        <p className="eyebrow">Attendance</p>
+        <h1>Be present, clearly.</h1>
+        <p className="lede">Check in/out offline, mark remote days, and keep a durable correction history for managers.</p>
+      </div>
+    </div>
+    {message && <p className="inline-message">{message}</p>}
+
+    <div className="attendance-today">
+      <div>
+        <p className="eyebrow">Today · {today}</p>
+        <h2>{todayRecord?.check_in_at ? todayRecord.check_out_at ? "Workday complete" : "Currently working" : todayRecord?.status === "remote" ? "Working remotely" : todayRecord?.status === "leave" ? "On leave" : todayRecord?.status === "absent" ? "Marked absent" : "Not checked in"}</h2>
+        <small>{hoursLabel} · status {todayRecord?.status ?? "—"}</small>
+      </div>
+      <div className="attendance-actions">
+        <button className="primary-button" type="button" onClick={() => void mark("check_in")} disabled={Boolean(todayRecord?.check_in_at) || todayRecord?.status === "leave" || todayRecord?.status === "absent"}>Check in</button>
+        <button className="text-button" type="button" onClick={() => void mark("check_out")} disabled={!todayRecord?.check_in_at || Boolean(todayRecord.check_out_at)}>Check out</button>
+        <button className="text-button" type="button" onClick={() => void setStatus("remote")} disabled={Boolean(todayRecord?.check_in_at)}>Mark remote</button>
+      </div>
+    </div>
+
+    <div className="section-heading task-heading"><div><p className="eyebrow">History</p><h2>{records.length} days</h2></div></div>
+    <div className="record-list">
+      {records.map((record) => <div className="record-row" key={record.id}>
+        <span className="record-avatar"><Clock3 size={15} /></span>
+        <span className="record-copy">
+          <strong>{record.work_date}</strong>
+          <small>{formatTime(record.check_in_at)} → {formatTime(record.check_out_at)}{typeof record.hours === "number" && record.hours > 0 ? ` · ${record.hours}h` : ""}</small>
+        </span>
+        <span className={`status-pill leave-${record.status === "present" || record.status === "remote" ? "approved" : record.status === "leave" ? "pending" : "rejected"}`}>{record.status}</span>
+      </div>)}
+    </div>
+
+    {canManage && <>
+      <div className="section-heading task-heading">
+        <div><p className="eyebrow">Team · {teamDate}</p><h2>{managerRecords.length} records</h2></div>
+        <DatePicker value={teamDate} onChange={setTeamDate} ariaLabel="Team date" />
+      </div>
+      {todaySummary && <div className="metric-grid">
+        <Metric label="Checked in" value={String(todaySummary.checked_in)} change={`${todaySummary.still_working} still working`} detail={`${todaySummary.checked_out} checked out`} />
+        <Metric label="Present / remote" value={`${todaySummary.present_count}/${todaySummary.remote_count}`} change={`${todaySummary.leave_count} on leave`} detail={`${todaySummary.absent_count} absent`} />
+        <Metric label="Corrections" value={String(corrections.length)} change="audit trail" detail="manager edits" />
+      </div>}
+      <div className="record-list">{managerRecords.map((record) => <div className="record-row" key={record.id}>
+        <span className="record-avatar"><UsersRound size={15} /></span>
+        <span className="record-copy"><strong>{record.display_name}</strong><small>{record.work_date} · {formatTime(record.check_in_at)} → {formatTime(record.check_out_at)}{typeof record.hours === "number" && record.hours > 0 ? ` · ${record.hours}h` : ""}</small></span>
+        <span className="status-pill">{record.status}</span>
+      </div>)}</div>
+
+      <form className="compact-form attendance-correction" onSubmit={(event) => void submitCorrection(event)}>
+        <p className="eyebrow">Correction</p>
+        <div className="form-grid">
+          <Dropdown value={correction.user_id} options={[{ value: "", label: "Select person" }, ...users.map((user) => ({ value: user.id, label: user.display_name }))]} onChange={(value) => setCorrection({ ...correction, user_id: value })} ariaLabel="Person" placeholder="Select person" />
+          <DatePicker value={correction.work_date} onChange={(value) => setCorrection({ ...correction, work_date: value })} ariaLabel="Work date" />
+          <Dropdown value={correction.status} options={ATTENDANCE_STATUS_OPTIONS} onChange={(value) => setCorrection({ ...correction, status: value })} ariaLabel="Status" />
+        </div>
+        <div className="form-grid">
+          <TimePicker value={correction.check_in_at} onChange={(value) => setCorrection({ ...correction, check_in_at: value })} ariaLabel="Check in" />
+          <TimePicker value={correction.check_out_at} onChange={(value) => setCorrection({ ...correction, check_out_at: value })} ariaLabel="Check out" />
+          <input placeholder="Reason or note" value={correction.note} onChange={(event) => setCorrection({ ...correction, note: event.target.value })} />
+          <button className="primary-button" type="submit">Save correction</button>
+        </div>
+      </form>
+
+      <div className="section-heading task-heading"><div><p className="eyebrow">Correction history</p><h2>{corrections.length}</h2></div></div>
+      <div className="record-list">
+        {corrections.length === 0 && <p className="lede">No corrections recorded yet.</p>}
+        {corrections.map((item) => <div className="activity-row" key={item.id}>
+          <span className="activity-icon"><Clock3 size={16} /></span>
+          <span className="activity-copy">
+            <strong>{item.display_name} · {item.work_date}</strong>
+            <small>{item.corrector_name} · {item.previous_status || "—"} → {item.status} · {formatTime(item.check_in_at)} → {formatTime(item.check_out_at)}{item.note ? ` · ${item.note}` : ""} · {new Date(item.created_at).toLocaleString()}</small>
+          </span>
+        </div>)}
+      </div>
+    </>}
+  </section>;
 }
 
 function inclusiveLeaveDays(start: string, end: string) {

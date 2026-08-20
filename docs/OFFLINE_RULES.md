@@ -46,7 +46,11 @@ local cache and outbox for device-offline mode.
 - Offline-capable: check-in and check-out capture.
 - Conflict rule: check-in and check-out for the same day apply to separate
   columns so the two operations never clobber each other. Manager corrections
-  remain server-side.
+  remain server-side and write an `attendance_corrections` history row.
+- Server rejects check-in on approved leave days and double check-in/out; those
+  rules are re-applied when the outbox syncs.
+- Status changes (`remote` / manager absent) and correction history are
+  **server-authoritative**.
 
 ### Leave and shifts
 

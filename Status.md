@@ -167,10 +167,11 @@ Completed in this milestone:
 - Sales summary returns a stable placeholder (`module_available: false`) until the CRM module lands
 - **Leave chosen as first production-depth module:** balances, policies, half-days, overlap checks, cancel flows, attendance + calendar side effects on approve, optional `leave` workflow routing, and a rebuilt Leave UI (migration `027_leave_production.sql`)
 - Design system now documents required custom **Dropdown / DatePicker / TimePicker** controls in `Design.md` and `Language-and-Design-System.md`
+- **Attendance chosen as second production-depth module:** worked hours, check-in/out validation, leave-day block, remote status, manager today rollup + date filter, durable correction history with notifications (migration `028_attendance_production.sql`)
 
 Next actions:
 
-1. Pick the next module for production depth (Attendance polish, Finance expenses, or CRM pipeline).
+1. Pick the next module for production depth (Finance expenses, Schedule/shifts, or CRM pipeline).
 2. Workflow approval reminders/deadlines and delegated approval.
 3. Phase 9 packaging, licensing, and installer architecture.
 4. Sales/CRM and IT/Ops remain scaffold-level until scheduled for depth.
