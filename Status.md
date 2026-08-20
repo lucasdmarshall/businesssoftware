@@ -180,6 +180,7 @@ Completed in this milestone:
 - **Finance depth:** AP/AR aging reports + bank reconciliation (accounts, statement lines, match/unmatch/exclude) — migration `036_finance_aging_bank_recon.sql`
 - **CRM pipeline production depth:** stage board + history, lead convert, contacts/activities suite tabs, live analytics sales summary — migration `037_crm_pipeline_production.sql`
 - **Core departments + credentials login:** default department catalog, username login, credential generator module (HR/IT by default), logout + auto-open home workspace — migration `038_core_departments_credentials_login.sql`
+- **Credential ID format:** `{firstname}_{dept}_{NNNNNN}` / `password{NNNNNN}` / `{PREFIX}{NNNNNN}` (e.g. `lucas_admin_000001`, `password000001`, `ADM000001`); per-dept sequence + Settings password change — migration `039_credential_id_format.sql`
 
 Next actions:
 

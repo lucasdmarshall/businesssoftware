@@ -597,7 +597,7 @@ function DepartmentWorkspaceShell({ workspace, view, onViewChange, onExit, onLog
           : view === "schedule" ? <ScheduleView departmentId={workspace.id} canManage={manage("schedule") || Boolean(currentUser?.permissions?.includes("shifts.manage"))} />
           : view === "tasks" ? <WorkView departmentId={workspace.id} />
           : view === "activity" ? <ActivityView departmentId={workspace.id} />
-          : view === "settings" ? <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">{workspace.name}</p><h1>Settings.</h1><p className="lede">Department settings stay inside this workspace. Company-wide lookup lists remain under Company → Settings.</p></div></div></section>
+          : view === "settings" ? <DeptSettingsView workspaceName={workspace.name} />
           : <DeptOverviewView workspace={workspace} />}
       </main>
     </div>
@@ -619,6 +619,47 @@ function DeptOverviewView({ workspace }: { workspace: DepartmentWorkspace }) {
         <Metric label="Access Control" value={workspace.modules.some((m) => m.code === "access") ? "On" : "Hidden"} change="heads & company only" detail="per-user grants inside this dept" />
         <Metric label="Isolation" value="On" change="deny by default" detail="cross-dept requires company grant" />
       </div>
+    </section>
+  );
+}
+
+function DeptSettingsView({ workspaceName }: { workspaceName: string }) {
+  const [passwordForm, setPasswordForm] = useState({ current_password: "", new_password: "" });
+  const [message, setMessage] = useState("");
+  const changePassword = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setMessage("");
+    const response = await fetch(`${apiBase}/auth/change-password`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(passwordForm),
+    });
+    const payload = await response.json().catch(() => null) as { error?: string | { message?: string } } | null;
+    if (!response.ok) {
+      const err = payload?.error;
+      setMessage(typeof err === "string" ? err : err?.message ?? "Could not change password");
+      return;
+    }
+    setMessage("Password changed · other sessions signed out");
+    setPasswordForm({ current_password: "", new_password: "" });
+  };
+  return (
+    <section className="content-wrap">
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">{workspaceName}</p>
+          <h1>Settings.</h1>
+          <p className="lede">Change the temporary password issued with your login. New password must be at least 12 characters.</p>
+        </div>
+      </div>
+      {message && <p className="inline-message">{message}</p>}
+      <form className="compact-form" onSubmit={(event) => void changePassword(event)}>
+        <p className="eyebrow">Change your password</p>
+        <div className="form-grid">
+          <input type="password" placeholder="Current password" value={passwordForm.current_password} onChange={(e) => setPasswordForm({ ...passwordForm, current_password: e.target.value })} required />
+          <input type="password" placeholder="New password (12+ characters)" minLength={12} value={passwordForm.new_password} onChange={(e) => setPasswordForm({ ...passwordForm, new_password: e.target.value })} required />
+          <button className="primary-button" type="submit">Update password</button>
+        </div>
+      </form>
     </section>
   );
 }
@@ -682,7 +723,7 @@ function DeptCredentialsView({ departmentId, canManage }: { departmentId: string
   };
   return (
     <section className="content-wrap">
-      <div className="page-heading"><div><p className="eyebrow">Credentials</p><h1>Issue employee logins.</h1><p className="lede">Company creates username, temporary password, and employee ID. The employee signs in and lands in their department workspace. Admin can grant this module to IT, HR, or any department via Access Control.</p></div></div>
+      <div className="page-heading"><div><p className="eyebrow">Credentials</p><h1>Issue employee logins.</h1><p className="lede">Format: username <code>firstname_dept_000001</code>, password <code>password000001</code>, EMP ID <code>ADM000001</code> (Administrations). Employees can change their password from department Settings.</p></div></div>
       {message && <p className="inline-message">{message}</p>}
       {!canManage && <p className="lede">You can view this module but cannot issue credentials.</p>}
       {canManage && (
@@ -3414,7 +3455,7 @@ function PeopleView() {
     </div>
     <div className="rbac-panel">
       <div className="section-heading"><div><p className="eyebrow">Credentials generator</p><h2>Issue login accounts</h2></div></div>
-      <p className="lede" style={{ marginBottom: 16 }}>Creates username, temporary password, and employee ID, then assigns the person to a department workspace.</p>
+      <p className="lede" style={{ marginBottom: 16 }}>Creates <code>firstname_dept_000001</code> / <code>password000001</code> / <code>ADM000001</code> (dept-specific), then assigns the person to a department workspace. Employees change password in their Settings.</p>
       <form className="compact-form role-form" onSubmit={(event) => void generateCredentials(event)}>
         <div className="form-grid">
           <input placeholder="Full name" value={credForm.display_name} onChange={(e) => setCredForm({ ...credForm, display_name: e.target.value })} required />
