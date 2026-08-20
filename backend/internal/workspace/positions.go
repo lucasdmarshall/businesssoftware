@@ -93,9 +93,9 @@ func slugifyPositionCode(name string) string {
 }
 
 var managerModules = []string{
-	"overview", "users", "positions", "attendance", "calendar", "leave", "schedule", "tasks", "activity",
+	"overview", "users", "positions", "attendance", "calendar", "leave", "schedule", "finance", "tasks", "activity",
 }
 
 var employeeModules = []string{
-	"overview", "users", "positions", "attendance", "calendar", "leave", "schedule", "tasks", "activity",
+	"overview", "users", "positions", "attendance", "calendar", "leave", "schedule", "finance", "tasks", "activity",
 }

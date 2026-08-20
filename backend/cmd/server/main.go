@@ -194,6 +194,10 @@ func main() {
 	mux.HandleFunc("POST /api/v1/workspaces/departments/{id}/salaries", workspaceHandler.Salaries)
 	mux.HandleFunc("GET /api/v1/workspaces/departments/{id}/bonuses", workspaceHandler.Bonuses)
 	mux.HandleFunc("POST /api/v1/workspaces/departments/{id}/bonuses", workspaceHandler.Bonuses)
+	mux.HandleFunc("GET /api/v1/workspaces/departments/{id}/finance", workspaceHandler.Finance)
+	mux.HandleFunc("POST /api/v1/workspaces/departments/{id}/finance", workspaceHandler.Finance)
+	mux.HandleFunc("GET /api/v1/workspaces/departments/{id}/finance/summary", workspaceHandler.FinanceSummary)
+	mux.HandleFunc("POST /api/v1/workspaces/departments/{id}/finance/status", workspaceHandler.FinanceStatus)
 	financeHandler := finance.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/vendors", authHandler.RequirePermission("finance.read", http.HandlerFunc(financeHandler.Vendors)))
 	mux.Handle("POST /api/v1/vendors", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.Vendors)))

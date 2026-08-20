@@ -19,15 +19,24 @@ When the user opens **HR**, navigation becomes HR-scoped:
 6. **Calendar** — HR events; **organization-wide events may also appear**  
 7. **Leave** — HR only  
 8. **Schedule** — HR only  
-9. **Salary management** — HR only (amount, withdrawn/not, month, …)  
-10. **Bonus management** — HR only  
-   - Columns: Name, Role, Privilege (e.g. punctuality allowance), Amount,
-     Debited on (date), ID (system-assigned random 8-digit, stored in DB)  
-11. **Tasks** — HR only (assigned tasks, grouping, goals, projects)  
-12. **Activity** — HR audit trail only  
-13. **Settings** — HR department settings  
+9. **Salary management** — department-needed payroll tracking  
+10. **Bonus management** — department-needed payouts  
+11. **Finance** — department money needs (salary/bonus shortcuts) **plus a
+    tracking table** for expenses/reimbursements/petty cash. This is **not**
+    the company Finance suite (CoA / AP / AR / journals).  
+12. **Tasks** — department only  
+13. **Activity** — department audit trail only  
+14. **Settings** — department settings  
 
-IT, Finance, Sales, etc. get the same *pattern* with their own module set.
+## Department Finance vs company Finance suite
+
+| Layer | Owns |
+|---|---|
+| **Company Finance suite** | Chart of accounts, journals, vendors/customers, AP bills, AR invoices, payments, tax |
+| **Department Finance module** | What *this* department needs (e.g. HR salary/bonus) + a simple tracking ledger table |
+
+Departments never get a second general ledger. They track operational money
+inside their workspace; company Finance remains the system of record.
 
 ## Isolation rule
 
@@ -71,7 +80,9 @@ Department calendars are department-scoped **and** may include events marked
 
 - Department switcher → enter a workspace  
 - Workspace APIs under `/api/v1/workspaces/departments/...`  
-- Position seed + reorder: migration `031_department_position_access.sql`  
+- Workspace foundation: migration `030_department_workspaces.sql`
+- Position seed + reorder: migration `031_department_position_access.sql`
+- Department Finance tracking table: migration `032_department_finance.sql`  
 - Remaining gap: some reused screens (Leave/Attendance/Tasks) still need
   department-scoped queries end-to-end  
 

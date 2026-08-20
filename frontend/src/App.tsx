@@ -488,6 +488,7 @@ const departmentNav: Array<{ code: string; label: string; icon: typeof LayoutDas
   { code: "schedule", label: "Schedule", icon: CalendarDays },
   { code: "salary", label: "Salary", icon: Wallet },
   { code: "bonus", label: "Bonus", icon: Wallet },
+  { code: "finance", label: "Finance", icon: Wallet },
   { code: "tasks", label: "Tasks", icon: BriefcaseBusiness },
   { code: "activity", label: "Activity", icon: Activity },
   { code: "settings", label: "Settings", icon: SlidersHorizontal },
@@ -547,6 +548,7 @@ function DepartmentWorkspaceShell({ workspace, view, onViewChange, onExit, syste
           : view === "access" ? <DeptAccessView departmentId={workspace.id} canManage={manage("access")} />
           : view === "salary" ? <DeptSalaryView departmentId={workspace.id} canManage={manage("salary")} />
           : view === "bonus" ? <DeptBonusView departmentId={workspace.id} canManage={manage("bonus")} />
+          : view === "finance" ? <DeptFinanceView departmentId={workspace.id} canManage={manage("finance")} hasSalary={Boolean(allowed.get("salary"))} hasBonus={Boolean(allowed.get("bonus"))} onOpen={(code) => onViewChange(code)} />
           : view === "attendance" ? <AttendanceView canManage={manage("attendance") || Boolean(currentUser?.permissions?.includes("attendance.manage"))} canCompanySettings={Boolean(currentUser?.permissions?.includes("organization.manage"))} />
           : view === "leave" ? <LeaveView canManage={manage("leave") || Boolean(currentUser?.permissions?.includes("leave.manage"))} currentEmail={currentUser?.email ?? ""} />
           : view === "calendar" ? <CalendarView />
@@ -753,6 +755,173 @@ function DeptBonusView({ departmentId, canManage }: { departmentId: string; canM
         <button className="primary-button" type="submit">Add bonus</button>
       </form>}
       <div className="record-list">{rows.map((row) => <div className="record-row" key={row.id}><span className="record-avatar"><Wallet size={15} /></span><span className="record-copy"><strong>{row.user_name} · {row.privilege || row.role_label || "Bonus"}</strong><small>ID {row.public_id} · {row.debited_on} · {row.currency} {row.amount.toFixed(2)} · {row.role_label}</small></span></div>)}</div>
+    </section>
+  );
+}
+
+const DEPT_FINANCE_CATEGORY_OPTIONS: DropdownOption[] = [
+  { value: "expense", label: "Expense" },
+  { value: "reimbursement", label: "Reimbursement" },
+  { value: "petty_cash", label: "Petty cash" },
+  { value: "allowance", label: "Allowance" },
+  { value: "salary", label: "Salary note" },
+  { value: "bonus", label: "Bonus note" },
+  { value: "other", label: "Other" },
+];
+const DEPT_FINANCE_STATUS_OPTIONS: DropdownOption[] = [
+  { value: "recorded", label: "Recorded" },
+  { value: "pending", label: "Pending" },
+  { value: "settled", label: "Settled" },
+];
+
+function DeptFinanceView({ departmentId, canManage, hasSalary, hasBonus, onOpen }: {
+  departmentId: string;
+  canManage: boolean;
+  hasSalary: boolean;
+  hasBonus: boolean;
+  onOpen: (code: string) => void;
+}) {
+  type Entry = { id: string; entry_date: string; category: string; direction: string; title: string; amount: number; currency: string; person_id: string; person_name: string; status: string; note: string };
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [summary, setSummary] = useState<{ out_total: number; in_total: number; pending_count: number; entry_count: number; currency: string } | null>(null);
+  const [salaries, setSalaries] = useState<Array<{ id: string; user_name: string; amount: number; currency: string; month: string; withdrawn: boolean }>>([]);
+  const [bonuses, setBonuses] = useState<Array<{ id: string; public_id: string; user_name: string; amount: number; currency: string; privilege: string; debited_on: string }>>([]);
+  const [members, setMembers] = useState<Array<{ user_id: string; display_name: string }>>([]);
+  const [form, setForm] = useState({ title: "", amount: "", category: "expense", direction: "out", entry_date: new Date().toISOString().slice(0, 10), person_id: "", status: "recorded", note: "" });
+  const [message, setMessage] = useState("");
+
+  const load = async () => {
+    const requests: Array<Promise<Response>> = [
+      fetch(`${apiBase}/workspaces/departments/${departmentId}/finance`, { credentials: "include" }),
+      fetch(`${apiBase}/workspaces/departments/${departmentId}/finance/summary`, { credentials: "include" }),
+      fetch(`${apiBase}/workspaces/departments/${departmentId}/members`, { credentials: "include" }),
+    ];
+    if (hasSalary) requests.push(fetch(`${apiBase}/workspaces/departments/${departmentId}/salaries`, { credentials: "include" }));
+    if (hasBonus) requests.push(fetch(`${apiBase}/workspaces/departments/${departmentId}/bonuses`, { credentials: "include" }));
+    const responses = await Promise.all(requests);
+    if (responses[0].ok) setEntries(await responses[0].json());
+    if (responses[1].ok) setSummary(await responses[1].json());
+    if (responses[2].ok) setMembers(await responses[2].json());
+    let idx = 3;
+    if (hasSalary && responses[idx]?.ok) { setSalaries(await responses[idx].json()); idx += 1; }
+    if (hasBonus && responses[idx]?.ok) setBonuses(await responses[idx].json());
+  };
+  useEffect(() => { void load(); }, [departmentId, hasSalary, hasBonus]);
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    const response = await fetch(`${apiBase}/workspaces/departments/${departmentId}/finance`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...form, amount: Number(form.amount) }),
+    });
+    setMessage(response.ok ? "Entry recorded" : "Could not save entry");
+    if (response.ok) {
+      setForm((current) => ({ ...current, title: "", amount: "", note: "" }));
+      void load();
+    }
+  };
+
+  const setStatus = async (id: string, status: string) => {
+    const response = await fetch(`${apiBase}/workspaces/departments/${departmentId}/finance/status`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status }),
+    });
+    if (response.ok) void load();
+  };
+
+  const money = (amount: number, currency = "USD") => `${currency} ${Number(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+
+  return (
+    <section className="content-wrap">
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">Department finance</p>
+          <h1>What this team spends.</h1>
+          <p className="lede">Department money needs + a tracking table. Company ledger / AP / AR stay in the company Finance suite — not here.</p>
+        </div>
+      </div>
+      {message && <p className="inline-message">{message}</p>}
+
+      {summary && (
+        <div className="metric-grid">
+          <Metric label="Money out" value={money(summary.out_total, summary.currency)} change={`${summary.entry_count} entries`} detail="recorded in this department" />
+          <Metric label="Money in" value={money(summary.in_total, summary.currency)} change={`${summary.pending_count} pending`} detail="reimbursements / inflows" />
+          <Metric label="Net track" value={money(summary.in_total - summary.out_total, summary.currency)} change="in − out" detail="tracking only — not GL" />
+        </div>
+      )}
+
+      {(hasSalary || hasBonus) && (
+        <div className="dept-finance-needs">
+          <div className="section-heading task-heading"><div><p className="eyebrow">This department needs</p><h2>Built-in money modules</h2></div></div>
+          <div className="dept-finance-need-grid">
+            {hasSalary && (
+              <button className="dept-finance-need" type="button" onClick={() => onOpen("salary")}>
+                <strong>Salary</strong>
+                <small>{salaries.slice(0, 3).map((row) => `${row.user_name} ${money(row.amount, row.currency)}`).join(" · ") || "Open salary table"}</small>
+              </button>
+            )}
+            {hasBonus && (
+              <button className="dept-finance-need" type="button" onClick={() => onOpen("bonus")}>
+                <strong>Bonus</strong>
+                <small>{bonuses.slice(0, 3).map((row) => `${row.user_name} ${money(row.amount, row.currency)}`).join(" · ") || "Open bonus table"}</small>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="section-heading task-heading"><div><p className="eyebrow">Tracking table</p><h2>{entries.length} rows</h2></div></div>
+      {canManage && (
+        <form className="compact-form" onSubmit={(event) => void save(event)}>
+          <div className="form-grid">
+            <input placeholder="Title" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required />
+            <input inputMode="decimal" placeholder="Amount" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value.replace(/[^0-9.]/g, "") })} required />
+            <Dropdown value={form.category} options={DEPT_FINANCE_CATEGORY_OPTIONS} onChange={(value) => setForm({ ...form, category: value })} ariaLabel="Category" />
+            <Dropdown value={form.direction} options={[{ value: "out", label: "Out" }, { value: "in", label: "In" }]} onChange={(value) => setForm({ ...form, direction: value })} ariaLabel="Direction" />
+          </div>
+          <div className="form-grid">
+            <DatePicker value={form.entry_date} onChange={(value) => setForm({ ...form, entry_date: value })} ariaLabel="Date" />
+            <Dropdown value={form.person_id} options={[{ value: "", label: "No person" }, ...members.map((m) => ({ value: m.user_id, label: m.display_name }))]} onChange={(value) => setForm({ ...form, person_id: value })} ariaLabel="Person" placeholder="Person" />
+            <Dropdown value={form.status} options={DEPT_FINANCE_STATUS_OPTIONS} onChange={(value) => setForm({ ...form, status: value })} ariaLabel="Status" />
+            <input placeholder="Note" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} />
+            <button className="primary-button" type="submit">Add row</button>
+          </div>
+        </form>
+      )}
+      <div className="attendance-table-wrap">
+        <table className="attendance-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Title</th>
+              <th>Category</th>
+              <th>Person</th>
+              <th>Direction</th>
+              <th>Amount</th>
+              <th>Status</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {entries.length === 0 && <tr><td colSpan={8}>No tracking rows yet.</td></tr>}
+            {entries.map((entry) => (
+              <tr key={entry.id}>
+                <td>{entry.entry_date}</td>
+                <td>{entry.title}{entry.note ? ` · ${entry.note}` : ""}</td>
+                <td>{entry.category.replace("_", " ")}</td>
+                <td>{entry.person_name || "—"}</td>
+                <td>{entry.direction}</td>
+                <td>{money(entry.amount, entry.currency)}</td>
+                <td><span className="status-pill">{entry.status}</span></td>
+                <td>
+                  {canManage && entry.status === "pending" && <button className="text-button" type="button" onClick={() => void setStatus(entry.id, "settled")}>Settle</button>}
+                  {canManage && entry.status !== "void" && <button className="text-button muted" type="button" onClick={() => void setStatus(entry.id, "void")}>Void</button>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }

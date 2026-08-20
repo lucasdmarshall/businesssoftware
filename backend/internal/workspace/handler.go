@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -18,7 +19,7 @@ import (
 // Module codes match the department workspace nav.
 var AllModules = []string{
 	"overview", "users", "access", "positions", "attendance", "calendar", "leave",
-	"schedule", "salary", "bonus", "tasks", "activity", "settings",
+	"schedule", "salary", "bonus", "finance", "tasks", "activity", "settings",
 }
 
 type Handler struct {
@@ -796,6 +797,214 @@ func (h Handler) Bonuses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusCreated, item)
+}
+
+type FinanceEntry struct {
+	ID         string  `json:"id"`
+	EntryDate  string  `json:"entry_date"`
+	Category   string  `json:"category"`
+	Direction  string  `json:"direction"`
+	Title      string  `json:"title"`
+	Amount     float64 `json:"amount"`
+	Currency   string  `json:"currency"`
+	PersonID   string  `json:"person_id"`
+	PersonName string  `json:"person_name"`
+	Status     string  `json:"status"`
+	Note       string  `json:"note"`
+	CreatedAt  string  `json:"created_at"`
+}
+
+type FinanceSummary struct {
+	OutTotal     float64 `json:"out_total"`
+	InTotal      float64 `json:"in_total"`
+	PendingCount int     `json:"pending_count"`
+	EntryCount   int     `json:"entry_count"`
+	Currency     string  `json:"currency"`
+}
+
+func validFinanceCategory(category string) bool {
+	switch category {
+	case "expense", "reimbursement", "petty_cash", "allowance", "salary", "bonus", "other":
+		return true
+	default:
+		return false
+	}
+}
+
+func validFinanceStatus(status string) bool {
+	switch status {
+	case "recorded", "pending", "settled", "void":
+		return true
+	default:
+		return false
+	}
+}
+
+// Finance lists or creates department-local money tracking rows (not company GL).
+func (h Handler) Finance(w http.ResponseWriter, r *http.Request) {
+	user, err := h.Auth.Authenticate(r)
+	if err != nil || h.DB == nil {
+		httpapi.WriteError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return
+	}
+	deptID := r.PathValue("id")
+	if r.Method == http.MethodGet {
+		if !h.canAccessModule(r.Context(), user, deptID, "finance", false) {
+			httpapi.WriteError(w, http.StatusForbidden, "forbidden", "finance module required")
+			return
+		}
+		rows, err := h.DB.Query(r.Context(), `
+			SELECT e.id, e.entry_date::text, e.category, e.direction, e.title, e.amount, e.currency,
+			       COALESCE(e.person_id::text,''), COALESCE(u.display_name,''), e.status, e.note, e.created_at::text
+			FROM department_finance_entries e
+			LEFT JOIN users u ON u.id=e.person_id
+			WHERE e.department_id=$1 AND e.organization_id=$2 AND e.status <> 'void'
+			ORDER BY e.entry_date DESC, e.created_at DESC LIMIT 500`, deptID, user.OrganizationID)
+		if err != nil {
+			httpapi.WriteError(w, http.StatusInternalServerError, "query_failed", "could not load finance entries")
+			return
+		}
+		defer rows.Close()
+		items := make([]FinanceEntry, 0)
+		for rows.Next() {
+			var item FinanceEntry
+			if err := rows.Scan(&item.ID, &item.EntryDate, &item.Category, &item.Direction, &item.Title, &item.Amount, &item.Currency,
+				&item.PersonID, &item.PersonName, &item.Status, &item.Note, &item.CreatedAt); err != nil {
+				httpapi.WriteError(w, http.StatusInternalServerError, "scan_failed", "could not read finance entries")
+				return
+			}
+			items = append(items, item)
+		}
+		httpapi.WriteJSON(w, http.StatusOK, items)
+		return
+	}
+	if !h.canAccessModule(r.Context(), user, deptID, "finance", true) {
+		httpapi.WriteError(w, http.StatusForbidden, "forbidden", "finance manage required")
+		return
+	}
+	var input struct {
+		EntryDate string  `json:"entry_date"`
+		Category  string  `json:"category"`
+		Direction string  `json:"direction"`
+		Title     string  `json:"title"`
+		Amount    float64 `json:"amount"`
+		Currency  string  `json:"currency"`
+		PersonID  string  `json:"person_id"`
+		Status    string  `json:"status"`
+		Note      string  `json:"note"`
+	}
+	if json.NewDecoder(r.Body).Decode(&input) != nil || strings.TrimSpace(input.Title) == "" || input.Amount < 0 {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "title and amount are required")
+		return
+	}
+	if input.Category == "" {
+		input.Category = "expense"
+	}
+	if !validFinanceCategory(input.Category) {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_category", "unknown finance category")
+		return
+	}
+	if input.Direction == "" {
+		input.Direction = "out"
+	}
+	if input.Direction != "in" && input.Direction != "out" {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_direction", "direction must be in or out")
+		return
+	}
+	if input.Currency == "" {
+		input.Currency = "USD"
+	}
+	if input.Status == "" {
+		input.Status = "recorded"
+	}
+	if !validFinanceStatus(input.Status) {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_status", "invalid status")
+		return
+	}
+	if input.EntryDate == "" {
+		input.EntryDate = time.Now().UTC().Format("2006-01-02")
+	}
+	var person any
+	if input.PersonID != "" {
+		person = input.PersonID
+	}
+	var item FinanceEntry
+	err = h.DB.QueryRow(r.Context(), `
+		INSERT INTO department_finance_entries (
+			organization_id, department_id, entry_date, category, direction, title, amount, currency, person_id, status, note, created_by
+		) VALUES ($1,$2,$3::date,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		RETURNING id, entry_date::text, category, direction, title, amount, currency, COALESCE(person_id::text,''), status, note, created_at::text`,
+		user.OrganizationID, deptID, input.EntryDate, input.Category, input.Direction, strings.TrimSpace(input.Title),
+		input.Amount, input.Currency, person, input.Status, input.Note, user.ID,
+	).Scan(&item.ID, &item.EntryDate, &item.Category, &item.Direction, &item.Title, &item.Amount, &item.Currency,
+		&item.PersonID, &item.Status, &item.Note, &item.CreatedAt)
+	if err != nil {
+		httpapi.WriteError(w, http.StatusBadRequest, "save_failed", "could not save finance entry")
+		return
+	}
+	if item.PersonID != "" {
+		_ = h.DB.QueryRow(r.Context(), `SELECT display_name FROM users WHERE id=$1`, item.PersonID).Scan(&item.PersonName)
+	}
+	_, _ = h.DB.Exec(r.Context(), `
+		INSERT INTO audit_logs (organization_id, actor_id, action, entity_type, entity_id, metadata)
+		VALUES ($1,$2,'department.finance_entry_created','department',$3,$4)`,
+		user.OrganizationID, user.ID, deptID, map[string]any{"entry_id": item.ID, "amount": item.Amount, "category": item.Category})
+	httpapi.WriteJSON(w, http.StatusCreated, item)
+}
+
+func (h Handler) FinanceSummary(w http.ResponseWriter, r *http.Request) {
+	user, err := h.Auth.Authenticate(r)
+	if err != nil || h.DB == nil {
+		httpapi.WriteError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return
+	}
+	deptID := r.PathValue("id")
+	if !h.canAccessModule(r.Context(), user, deptID, "finance", false) {
+		httpapi.WriteError(w, http.StatusForbidden, "forbidden", "finance module required")
+		return
+	}
+	var summary FinanceSummary
+	summary.Currency = "USD"
+	_ = h.DB.QueryRow(r.Context(), `
+		SELECT
+			COALESCE(SUM(amount) FILTER (WHERE direction='out' AND status IN ('recorded','settled','pending')),0),
+			COALESCE(SUM(amount) FILTER (WHERE direction='in' AND status IN ('recorded','settled','pending')),0),
+			COUNT(*) FILTER (WHERE status='pending'),
+			COUNT(*) FILTER (WHERE status <> 'void')
+		FROM department_finance_entries
+		WHERE department_id=$1 AND organization_id=$2`, deptID, user.OrganizationID,
+	).Scan(&summary.OutTotal, &summary.InTotal, &summary.PendingCount, &summary.EntryCount)
+	httpapi.WriteJSON(w, http.StatusOK, summary)
+}
+
+func (h Handler) FinanceStatus(w http.ResponseWriter, r *http.Request) {
+	user, err := h.Auth.Authenticate(r)
+	if err != nil || h.DB == nil {
+		httpapi.WriteError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return
+	}
+	deptID := r.PathValue("id")
+	if !h.canAccessModule(r.Context(), user, deptID, "finance", true) {
+		httpapi.WriteError(w, http.StatusForbidden, "forbidden", "finance manage required")
+		return
+	}
+	var input struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if json.NewDecoder(r.Body).Decode(&input) != nil || input.ID == "" || !validFinanceStatus(input.Status) {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "id and valid status are required")
+		return
+	}
+	tag, err := h.DB.Exec(r.Context(), `
+		UPDATE department_finance_entries SET status=$1, updated_at=NOW()
+		WHERE id=$2 AND department_id=$3 AND organization_id=$4`,
+		input.Status, input.ID, deptID, user.OrganizationID)
+	if err != nil || tag.RowsAffected() == 0 {
+		httpapi.WriteError(w, http.StatusBadRequest, "update_failed", "entry not found")
+		return
+	}
+	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"status": input.Status})
 }
 
 func validModule(code string) bool {
