@@ -24,15 +24,15 @@ type AgingBucket struct {
 }
 
 type AgingRow struct {
-	ID           string  `json:"id"`
-	Number       string  `json:"number"`
-	PartyName    string  `json:"party_name"`
-	DueDate      string  `json:"due_date"`
-	DaysPastDue  int     `json:"days_past_due"`
-	Bucket       string  `json:"bucket"`
-	OpenAmount   float64 `json:"open_amount"`
-	Currency     string  `json:"currency"`
-	Status       string  `json:"status"`
+	ID          string  `json:"id"`
+	Number      string  `json:"number"`
+	PartyName   string  `json:"party_name"`
+	DueDate     string  `json:"due_date"`
+	DaysPastDue int     `json:"days_past_due"`
+	Bucket      string  `json:"bucket"`
+	OpenAmount  float64 `json:"open_amount"`
+	Currency    string  `json:"currency"`
+	Status      string  `json:"status"`
 }
 
 type AgingReport struct {

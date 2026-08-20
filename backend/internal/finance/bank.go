@@ -11,13 +11,13 @@ import (
 )
 
 type BankAccount struct {
-	ID                   string `json:"id"`
-	Name                 string `json:"name"`
-	Currency             string `json:"currency"`
-	AccountNumberMasked  string `json:"account_number_masked"`
-	GLAccountID          string `json:"gl_account_id"`
-	IsActive             bool   `json:"is_active"`
-	UnmatchedCount       int    `json:"unmatched_count"`
+	ID                  string `json:"id"`
+	Name                string `json:"name"`
+	Currency            string `json:"currency"`
+	AccountNumberMasked string `json:"account_number_masked"`
+	GLAccountID         string `json:"gl_account_id"`
+	IsActive            bool   `json:"is_active"`
+	UnmatchedCount      int    `json:"unmatched_count"`
 }
 
 type BankTransaction struct {
