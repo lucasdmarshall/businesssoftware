@@ -223,6 +223,8 @@ func applyAttendance(tx pgx.Tx, organizationID, userID string, operation Operati
 		return fmt.Errorf("unsupported attendance operation")
 	}
 	_, err := tx.Exec(context.Background(), `INSERT INTO attendance_records (id, organization_id, user_id, work_date, `+column+`, note) VALUES (COALESCE(NULLIF($1, '')::uuid, gen_random_uuid()), $2, $3, $4, $5, $6) ON CONFLICT (organization_id, user_id, work_date) DO UPDATE SET `+column+` = EXCLUDED.`+column+`, note = EXCLUDED.note, updated_at = NOW()`, payload.ID, organizationID, userID, payload.WorkDate, payload.At, payload.Note)
+	// Cross-device merges key on work_date so check-in from one device and
+	// check-out from another land on the same attendance row.
 	return err
 }
 
