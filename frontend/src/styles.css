@@ -149,6 +149,12 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .schedule-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 40px 0 8px; }
 .schedule-week-label { color: var(--muted); font-size: 11px; margin-right: auto; }
 
+.finance-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 36px 0 28px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.finance-tab { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 11px; padding: 8px 10px; cursor: pointer; border-bottom: 2px solid transparent; }
+.finance-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.finance-tab:hover { color: var(--text); }
+.checkbox-inline { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
+
 @media (max-width: 960px) {
   .attendance-desk { grid-template-columns: 1fr; }
   .attendance-policy { flex-direction: column; align-items: flex-start; }

@@ -174,13 +174,14 @@ Completed in this milestone:
 - **Attendance desk + company check-in policy:** company-level expected check-in time (`organization.manage` only — not department heads); manager Name/Position/Employee ID desk with Check in / Absent; recent table (5 rows default) with Early by / Late by auto-calc `hh:mm:ss` (migration `029_attendance_company_policy.sql`)
 - **Product decision: Department Workspaces** — each department is an isolated shell (Overview, Users, Access Control, Attendance, Calendar, Leave, Schedule, Salary, Bonus, Tasks, Activity, Settings, Finance). Other departments cannot see that data; company-wide access (`company.departments.access` / owner) can enter any workspace. Spec: `docs/DEPARTMENT_WORKSPACES.md`. Foundation APIs + UI shell in migration `030_department_workspaces.sql`
 - **Schedule chosen as third production-depth module:** week view, assign people, overlap + approved-leave conflicts, confirm/complete/cancel, duration + week hours rollup (migration `033_schedule_production.sql`)
+- **Finance suite foundation:** chart of accounts, journals, tax codes, customers, AP bills, payments, suite UI tabs — see `docs/FINANCE_SUITE.md` (migration `034_finance_suite.sql`)
 
 Next actions:
 
 1. Finish data isolation: scope Leave/Attendance/Tasks/Activity queries by department membership (not only workspace nav).
 2. Wire People UI to assign department membership + head flag.
-3. Land company Finance suite production depth.
-4. Phase 9 packaging, licensing, and installer architecture.
+3. Finance depth (aging reports, bank recon) and Phase 9 packaging.
+4. Sales/CRM and IT/Ops remain scaffold-level until scheduled for depth.
 
 ## Active Work
 
