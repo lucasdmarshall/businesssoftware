@@ -233,6 +233,9 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Purchase requests (draft, workflow approval)
 - [x] Vendors
 - [x] Finance approvals (routed through the generic workflow engine)
+- [x] Finance suite: chart of accounts, journals, tax codes, customers
+- [x] AP bills + payments (cash in/out linked to bills/invoices)
+- [x] Suite UI tabs (Overview → Purchase)
 
 ### Sales and CRM
 
