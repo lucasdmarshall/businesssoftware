@@ -18,17 +18,37 @@ Every organization seeds these departments (slug in parentheses):
 
 CEO/admin (`organization.manage`) can **rename**, **archive/remove**, or **add** departments from Company → People.
 
-Migration: `038_core_departments_credentials_login.sql`.
+Migrations: `038_core_departments_credentials_login.sql`, `039_credential_id_format.sql`.
 
 ## Company-issued logins
 
-Employees do not self-register. HR / IT (or any department granted the module) issues:
+Employees do not self-register. HR / IT (or any department granted the module) issues credentials with a **per-department sequence**:
 
-| Field | Source |
-|---|---|
-| Username | Auto-generated from name (unique per org) |
-| Password | One-time random temporary password (12+) |
-| Employee ID | `EMP-YYYY-NNNN` |
+| Field | Format | Example (Administrations, seq 1) |
+|---|---|---|
+| Username | `{firstname}_{dept_tag}_{NNNNNN}` | `lucas_admin_000001` |
+| Password | `password{NNNNNN}` | `password000001` |
+| Employee ID | `{PREFIX}{NNNNNN}` | `ADM000001` |
+
+Department tags / EMP prefixes:
+
+| Department | Username tag | EMP prefix |
+|---|---|---|
+| Administrations | `admin` | `ADM` |
+| HR | `hr` | `HR` |
+| Sales | `sales` | `SAL` |
+| Finance | `finance` | `FIN` |
+| IT | `it` | `IT` |
+| Operations | `ops` | `OPS` |
+| Marketing | `mkt` | `MKT` |
+| Procurement | `proc` | `PRC` |
+| Customer Service | `cs` | `CS` |
+| Reports and Analytics | `analytics` | `RPT` |
+| Legal and Compliance | `legal` | `LEG` |
+
+Custom departments derive a tag from the first slug token and a 2–3 letter EMP prefix.
+
+Default passwords meet the 12+ character policy (`password` + 6 digits = 14). Employees change their password from **department Settings** (`POST /api/v1/auth/change-password`).
 
 APIs:
 

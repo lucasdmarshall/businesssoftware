@@ -40,33 +40,25 @@ func (h Handler) GenerateCredentials(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var deptOrg string
+	var deptOrg, deptSlug string
 	var archived bool
 	err = h.DB.QueryRow(r.Context(), `
-		SELECT organization_id, archived_at IS NOT NULL FROM departments WHERE id=$1`, input.DepartmentID).Scan(&deptOrg, &archived)
+		SELECT organization_id, slug, archived_at IS NOT NULL FROM departments WHERE id=$1`, input.DepartmentID).Scan(&deptOrg, &deptSlug, &archived)
 	if err != nil || deptOrg != user.OrganizationID || archived {
 		httpapi.WriteError(w, http.StatusBadRequest, "invalid_department", "department not found")
 		return
 	}
 
-	username, err := GenerateUsername(r.Context(), h.DB, user.OrganizationID, input.DisplayName)
+	username, plainPassword, employeeID, err := AllocateEmployeeIdentity(
+		r.Context(), h.DB, user.OrganizationID, input.DepartmentID, input.DisplayName, deptSlug,
+	)
 	if err != nil {
-		httpapi.WriteError(w, http.StatusInternalServerError, "username_failed", "could not generate username")
-		return
-	}
-	plainPassword, err := GeneratePassword()
-	if err != nil {
-		httpapi.WriteError(w, http.StatusInternalServerError, "password_failed", "could not generate password")
+		httpapi.WriteError(w, http.StatusInternalServerError, "identity_failed", "could not allocate employee identity")
 		return
 	}
 	passwordHash, err := auth.HashPassword(plainPassword)
 	if err != nil {
 		httpapi.WriteError(w, http.StatusInternalServerError, "password_failed", err.Error())
-		return
-	}
-	employeeID, err := NextEmployeeID(r.Context(), h.DB, user.OrganizationID)
-	if err != nil {
-		httpapi.WriteError(w, http.StatusInternalServerError, "employee_id_failed", "could not allocate employee id")
 		return
 	}
 	email := strings.TrimSpace(strings.ToLower(input.Email))
@@ -135,6 +127,6 @@ func (h Handler) GenerateCredentials(w http.ResponseWriter, r *http.Request) {
 		"employee_id":   employeeID,
 		"email":         email,
 		"department_id": input.DepartmentID,
-		"message":       "Share these credentials with the employee once. The password is not stored in plain text.",
+		"message":       "Share these credentials with the employee once. They can change the password from their department Settings.",
 	})
 }
