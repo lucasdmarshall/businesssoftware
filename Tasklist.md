@@ -235,12 +235,12 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Add executive dashboard (organization-scope summary)
 - [x] Add delayed-work alerts (overdue task metric)
 - [x] Add approval bottleneck alerts (approvals-waiting metric)
-- [ ] Add spending summaries
-- [ ] Add attendance summaries
-- [ ] Add sales summaries
-- [ ] Add custom reports
-- [ ] Add scheduled reports
-- [ ] Add export audit trail when reporting/export services are introduced
+- [x] Add spending summaries
+- [x] Add attendance summaries
+- [x] Add sales summaries
+- [x] Add custom reports
+- [x] Add scheduled reports
+- [x] Add export audit trail when reporting/export services are introduced
 
 ## Phase 9 — Packaging, Licensing, and Operations
 

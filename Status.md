@@ -160,17 +160,18 @@ Completed in this milestone:
 - Phase 6 offline capability advanced: deletion tombstones with change-feed propagation (task delete drops the local copy on pull), a sync conflict history with entity-specific keep-mine/keep-server resolution, an offline conflict review panel in Work, and documented offline + server-authoritative rules (migration `019_tombstones_and_conflicts.sql`, `docs/OFFLINE_RULES.md`)
 - Phase 7 first business module (Finance): vendors and expenses (migration `020_finance.sql`). Expense submit routes approval through the generic workflow engine via a new reusable `workflow.Start`/`FindDefinitionByEntity`; approval state is read live from the linked instance, and finance managers mark approved expenses paid. A Finance view adds vendor and expense management end to end
 - Finance proves the platform integration: RBAC (`finance.*`), the workflow engine for approvals, audit logging, and the shared `httpapi` conventions all compose in one module
+- Phase 8 analytics and executive control: spending/attendance/sales summary APIs (`analytics.read`), saved report definitions and schedules (migration `021_analytics_reports.sql`), JSON export with `report.exported` audit events, and a schedule worker that advances due runs and notifies creators
+- Reports UI covers period summaries, save/export custom reports, and schedule cadence; Overview surfaces 30-day spending and attendance metrics alongside the existing KPI dashboard
+- Sales summary returns a stable placeholder (`module_available: false`) until the CRM module lands
 
 Next actions:
 
-1. Add team scope, scope-aware dashboards, and department data policies.
-2. Add shifts, leave balance, correction history, and payroll rules.
-3. Add conflict history and entity-specific merge resolution.
-4. Add export audit hooks when reporting/export services are introduced.
-5. Wire existing modules (leave, future finance) through the generic workflow engine instead of module-local approve/reject.
-6. Add workflow approval reminders/deadlines and delegated approval.
-7. Add delete tombstones so device-offline clients also receive deletions through the pull feed (pull now applies creates/updates only).
-8. Add a cross-device attendance merge keyed on work date (pull currently upserts attendance by record id).
+1. HR depth: employee profiles, onboarding/offboarding checklists, HR documents.
+2. Sales/CRM module to fill the reserved sales summary shape.
+3. IT/Ops tickets, assets, and service requests.
+4. Phase 9 packaging, licensing, and installer architecture.
+5. Workflow approval reminders/deadlines and delegated approval (if not already on other branches).
+6. Leave balance, correction history, and payroll rules (if not already on other branches).
 
 ## Active Work
 

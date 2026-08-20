@@ -11,6 +11,7 @@ import {
   CalendarDays,
   FolderKanban,
   LayoutDashboard,
+  LineChart,
   Moon,
   PanelLeft,
   Search,
@@ -45,7 +46,7 @@ type CalendarEvent = { id: string; title: string; description: string; starts_at
 
 const workflowStatusClass: Record<string, string> = { in_review: "leave-pending", approved: "leave-approved", rejected: "leave-rejected", cancelled: "leave-rejected", draft: "" };
 
-const viewForLabel = (label: string): string => label === "People" ? "people" : label === "Work" ? "work" : label === "Projects" ? "projects" : label === "Approvals" ? "approvals" : label === "Finance" ? "finance" : label === "Calendar" ? "calendar" : label === "Attendance" ? "attendance" : label === "Leave" ? "leave" : label === "Schedule" ? "schedule" : label === "Activity" ? "activity" : "overview";
+const viewForLabel = (label: string): string => label === "People" ? "people" : label === "Work" ? "work" : label === "Projects" ? "projects" : label === "Approvals" ? "approvals" : label === "Finance" ? "finance" : label === "Reports" ? "reports" : label === "Calendar" ? "calendar" : label === "Attendance" ? "attendance" : label === "Leave" ? "leave" : label === "Schedule" ? "schedule" : label === "Activity" ? "activity" : "overview";
 
 const apiBase = "http://localhost:8080/api/v1";
 
@@ -55,6 +56,7 @@ const navigation = [
   { label: "Projects", icon: FolderKanban, permission: "projects.read" },
   { label: "Approvals", icon: ClipboardCheck, permission: "workflow.read" },
   { label: "Finance", icon: Wallet, permission: "finance.read" },
+  { label: "Reports", icon: LineChart, permission: "analytics.read" },
   { label: "Calendar", icon: CalendarDays, permission: "calendar.read" },
   { label: "Attendance", icon: Clock3, permission: "attendance.read" },
   { label: "Leave", icon: CalendarDays, permission: "leave.read" },
@@ -199,7 +201,7 @@ function App() {
           </div>
         </header>
 
-        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "projects" ? <ProjectsView /> : activeView === "approvals" ? <WorkflowView /> : activeView === "finance" ? <FinanceView /> : activeView === "calendar" ? <CalendarView /> : activeView === "attendance" ? <AttendanceView /> : activeView === "leave" ? <LeaveView /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : <section className="content-wrap">
+        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "projects" ? <ProjectsView /> : activeView === "approvals" ? <WorkflowView /> : activeView === "finance" ? <FinanceView /> : activeView === "reports" ? <ReportsView /> : activeView === "calendar" ? <CalendarView /> : activeView === "attendance" ? <AttendanceView /> : activeView === "leave" ? <LeaveView /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : <section className="content-wrap">
           <div className="page-heading">
             <div>
               <p className="eyebrow">Wednesday, 20 August 2026</p>
@@ -424,10 +426,17 @@ function ActivityView() {
 }
 
 type DashboardSummary = { scope: string; open_tasks: number; in_progress_tasks: number; overdue_tasks: number; done_tasks: number; approvals_waiting: number; upcoming_events: number; unread_notifications: number; department_breakdown: Array<{ department: string; open_tasks: number }> };
+type SpendingSummary = { period: string; from: string; to: string; total_spent: number; expense_count: number; paid_count: number; by_category: Array<{ category: string; amount: number; count: number }> };
+type AttendanceSummary = { period: string; from: string; to: string; present_days: number; remote_days: number; leave_days: number; absent_days: number; checked_in_days: number; completed_days: number; total_hours: number; average_hours: number };
+type SalesSummary = { period: string; from: string; to: string; module_available: boolean; message: string; lead_count: number; opportunity_count: number; pipeline_value: number; won_value: number };
+type ReportDefinition = { id: string; code: string; name: string; report_type: string; description: string; config: Record<string, unknown>; created_at: string };
+type ReportSchedule = { id: string; definition_id: string; definition_name: string; report_type: string; cadence: string; next_run_at: string; last_run_at: string | null; active: boolean; created_at: string };
 
 function DashboardOverview() {
   const [scope, setScope] = useState("organization");
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [spending, setSpending] = useState<SpendingSummary | null>(null);
+  const [attendance, setAttendance] = useState<AttendanceSummary | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -437,6 +446,19 @@ function DashboardOverview() {
     })();
     return () => { active = false; };
   }, [scope]);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const [spendRes, attendRes] = await Promise.all([
+        fetch(`${apiBase}/analytics/spending?period=30d`, { credentials: "include" }),
+        fetch(`${apiBase}/analytics/attendance?period=30d`, { credentials: "include" }),
+      ]);
+      if (active && spendRes.ok) setSpending(await spendRes.json());
+      if (active && attendRes.ok) setAttendance(await attendRes.json());
+    })();
+    return () => { active = false; };
+  }, []);
 
   const showBreakdown = (scope === "organization" || scope === "department") && (summary?.department_breakdown?.length ?? 0) > 0;
 
@@ -455,11 +477,168 @@ function DashboardOverview() {
       <Metric label="Overdue" value={String(summary?.overdue_tasks ?? 0)} change={summary && summary.overdue_tasks > 0 ? "needs attention" : "on track"} detail="past their due date" warning={Boolean(summary && summary.overdue_tasks > 0)} />
       <Metric label="Approvals waiting" value={String(summary?.approvals_waiting ?? 0)} change={`${summary?.upcoming_events ?? 0} events soon`} detail="need your decision" warning={Boolean(summary && summary.approvals_waiting > 0)} />
     </div>
+    {(spending || attendance) && <div className="metric-grid">
+      <Metric label="Spending (30d)" value={spending ? `$${spending.total_spent.toFixed(0)}` : "—"} change={`${spending?.expense_count ?? 0} expenses`} detail={`${spending?.paid_count ?? 0} paid`} />
+      <Metric label="Attendance (30d)" value={String(attendance?.present_days ?? 0)} change={`${attendance?.total_hours ?? 0}h logged`} detail={`${attendance?.completed_days ?? 0} completed days`} />
+      <Metric label="Avg hours / day" value={String(attendance?.average_hours ?? 0)} change={`${attendance?.remote_days ?? 0} remote`} detail="completed check-outs" />
+    </div>}
     {showBreakdown && <>
       <div className="section-heading"><div><p className="eyebrow">By department</p><h2>Open work across the company.</h2></div></div>
       <div className="record-list">{summary!.department_breakdown.map((row) => <div className="record-row" key={row.department}><span className="record-avatar department-avatar"><BriefcaseBusiness size={15} /></span><span className="record-copy"><strong>{row.department}</strong><small>{row.open_tasks} open {row.open_tasks === 1 ? "task" : "tasks"}</small></span><span className="status-pill">{row.open_tasks}</span></div>)}</div>
     </>}
   </>;
+}
+
+function ReportsView() {
+  const [period, setPeriod] = useState("30d");
+  const [spending, setSpending] = useState<SpendingSummary | null>(null);
+  const [attendance, setAttendance] = useState<AttendanceSummary | null>(null);
+  const [sales, setSales] = useState<SalesSummary | null>(null);
+  const [definitions, setDefinitions] = useState<ReportDefinition[]>([]);
+  const [schedules, setSchedules] = useState<ReportSchedule[]>([]);
+  const [exportPreview, setExportPreview] = useState("");
+  const [message, setMessage] = useState("");
+  const [reportForm, setReportForm] = useState({ code: "", name: "", report_type: "spending", description: "", period: "30d" });
+  const [scheduleForm, setScheduleForm] = useState({ definition_id: "", cadence: "weekly" });
+  const [showCreate, setShowCreate] = useState(false);
+
+  const load = async () => {
+    const [spendRes, attendRes, salesRes, defsRes, schedRes] = await Promise.all([
+      fetch(`${apiBase}/analytics/spending?period=${period}`, { credentials: "include" }),
+      fetch(`${apiBase}/analytics/attendance?period=${period}`, { credentials: "include" }),
+      fetch(`${apiBase}/analytics/sales?period=${period}`, { credentials: "include" }),
+      fetch(`${apiBase}/reports`, { credentials: "include" }),
+      fetch(`${apiBase}/reports/schedules`, { credentials: "include" }),
+    ]);
+    if (spendRes.ok) setSpending(await spendRes.json());
+    if (attendRes.ok) setAttendance(await attendRes.json());
+    if (salesRes.ok) setSales(await salesRes.json());
+    if (defsRes.ok) setDefinitions(await defsRes.json());
+    if (schedRes.ok) setSchedules(await schedRes.json());
+  };
+
+  useEffect(() => { void load(); }, [period]);
+
+  const createReport = async (event: FormEvent) => {
+    event.preventDefault();
+    const response = await fetch(`${apiBase}/reports`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code: reportForm.code,
+        name: reportForm.name,
+        report_type: reportForm.report_type,
+        description: reportForm.description,
+        config: { period: reportForm.period },
+      }),
+    });
+    setMessage(response.ok ? "Report saved." : "Could not save report.");
+    if (response.ok) {
+      setReportForm({ code: "", name: "", report_type: "spending", description: "", period: "30d" });
+      setShowCreate(false);
+      await load();
+    }
+  };
+
+  const createSchedule = async (event: FormEvent) => {
+    event.preventDefault();
+    const response = await fetch(`${apiBase}/reports/schedules`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(scheduleForm),
+    });
+    setMessage(response.ok ? "Schedule created." : "Could not create schedule.");
+    if (response.ok) {
+      setScheduleForm({ definition_id: "", cadence: "weekly" });
+      await load();
+    }
+  };
+
+  const exportReport = async (id: string) => {
+    const response = await fetch(`${apiBase}/reports/${id}/export`, { method: "POST", credentials: "include" });
+    if (!response.ok) {
+      setMessage("Export failed.");
+      return;
+    }
+    const payload = await response.json();
+    setExportPreview(JSON.stringify(payload, null, 2));
+    setMessage("Export ready — recorded in the audit trail.");
+  };
+
+  return <section className="content-wrap">
+    <div className="page-heading">
+      <div>
+        <p className="eyebrow">Reports</p>
+        <h1>Summaries &amp; exports.</h1>
+        <p className="lede">Spending, attendance, and sales summaries with saved reports, schedules, and an export audit trail.</p>
+      </div>
+      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+        <select className="scope-select" value={period} onChange={(event) => setPeriod(event.target.value)} aria-label="Summary period">
+          <option value="7d">Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+          <option value="90d">Last 90 days</option>
+          <option value="ytd">Year to date</option>
+        </select>
+        <button className="primary-button" type="button" onClick={() => setShowCreate((value) => !value)}>{showCreate ? "Close" : "Save report"}</button>
+      </div>
+    </div>
+    {message && <p className="form-message">{message}</p>}
+
+    <div className="metric-grid">
+      <Metric label="Total spent" value={spending ? `$${spending.total_spent.toFixed(2)}` : "—"} change={`${spending?.expense_count ?? 0} expenses`} detail={`${spending?.from ?? ""} → ${spending?.to ?? ""}`} />
+      <Metric label="Present days" value={String(attendance?.present_days ?? 0)} change={`${attendance?.leave_days ?? 0} leave · ${attendance?.absent_days ?? 0} absent`} detail={`${attendance?.total_hours ?? 0} hours`} />
+      <Metric label="Sales pipeline" value={sales?.module_available ? `$${(sales.pipeline_value ?? 0).toFixed(0)}` : "—"} change={sales?.module_available ? `${sales.opportunity_count} opportunities` : "CRM not installed"} detail={sales?.message ?? "Reserved summary shape"} />
+    </div>
+
+    {(spending?.by_category?.length ?? 0) > 0 && <>
+      <div className="section-heading task-heading"><div><p className="eyebrow">By category</p><h2>Spending breakdown</h2></div></div>
+      <div className="record-list">{spending!.by_category.map((row) => <div className="record-row" key={row.category}><span className="record-avatar"><Wallet size={15} /></span><span className="record-copy"><strong>{row.category}</strong><small>{row.count} expense{row.count === 1 ? "" : "s"}</small></span><span className="status-pill">${row.amount.toFixed(2)}</span></div>)}</div>
+    </>}
+
+    {showCreate && <form className="inline-form" onSubmit={(event) => void createReport(event)}>
+      <input required placeholder="Code" value={reportForm.code} onChange={(event) => setReportForm({ ...reportForm, code: event.target.value })} />
+      <input required placeholder="Name" value={reportForm.name} onChange={(event) => setReportForm({ ...reportForm, name: event.target.value })} />
+      <select value={reportForm.report_type} onChange={(event) => setReportForm({ ...reportForm, report_type: event.target.value })}>
+        <option value="spending">Spending</option>
+        <option value="attendance">Attendance</option>
+        <option value="sales">Sales</option>
+        <option value="custom">Custom</option>
+      </select>
+      <select value={reportForm.period} onChange={(event) => setReportForm({ ...reportForm, period: event.target.value })}>
+        <option value="7d">7d</option>
+        <option value="30d">30d</option>
+        <option value="90d">90d</option>
+        <option value="ytd">YTD</option>
+      </select>
+      <input placeholder="Description" value={reportForm.description} onChange={(event) => setReportForm({ ...reportForm, description: event.target.value })} />
+      <button className="primary-button" type="submit">Save</button>
+    </form>}
+
+    <div className="section-heading task-heading"><div><p className="eyebrow">Saved reports</p><h2>{definitions.length}</h2></div></div>
+    <div className="record-list">{definitions.length === 0 ? <p className="lede">No saved reports yet.</p> : definitions.map((report) => <div className="record-row" key={report.id}><span className="record-avatar"><LineChart size={15} /></span><span className="record-copy"><strong>{report.name}</strong><small>{report.report_type} · {report.code}{report.description ? ` · ${report.description}` : ""}</small></span><span className="record-actions"><button className="text-button" type="button" onClick={() => void exportReport(report.id)}>Export</button></span></div>)}</div>
+
+    <div className="section-heading task-heading"><div><p className="eyebrow">Schedules</p><h2>{schedules.length}</h2></div></div>
+    <form className="inline-form" onSubmit={(event) => void createSchedule(event)}>
+      <select required value={scheduleForm.definition_id} onChange={(event) => setScheduleForm({ ...scheduleForm, definition_id: event.target.value })}>
+        <option value="">Select report</option>
+        {definitions.map((report) => <option key={report.id} value={report.id}>{report.name}</option>)}
+      </select>
+      <select value={scheduleForm.cadence} onChange={(event) => setScheduleForm({ ...scheduleForm, cadence: event.target.value })}>
+        <option value="daily">Daily</option>
+        <option value="weekly">Weekly</option>
+        <option value="monthly">Monthly</option>
+      </select>
+      <button className="primary-button" type="submit">Schedule</button>
+    </form>
+    <div className="record-list">{schedules.map((schedule) => <div className="record-row" key={schedule.id}><span className="record-avatar"><Clock3 size={15} /></span><span className="record-copy"><strong>{schedule.definition_name}</strong><small>{schedule.cadence} · next {new Date(schedule.next_run_at).toLocaleString()}{schedule.last_run_at ? ` · last ${new Date(schedule.last_run_at).toLocaleString()}` : ""}</small></span><span className={`status-pill ${schedule.active ? "leave-approved" : ""}`}>{schedule.active ? "active" : "paused"}</span></div>)}</div>
+
+    {exportPreview && <>
+      <div className="section-heading task-heading"><div><p className="eyebrow">Last export</p><h2>JSON snapshot</h2></div></div>
+      <pre className="code-block" style={{ whiteSpace: "pre-wrap", fontSize: 12, maxHeight: 320, overflow: "auto" }}>{exportPreview}</pre>
+    </>}
+  </section>;
 }
 
 const expenseStatusClass: Record<string, string> = { approved: "leave-approved", rejected: "leave-rejected", in_review: "leave-pending", paid: "leave-approved", submitted: "leave-pending", draft: "" };

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"name/backend/internal/analytics"
 	"name/backend/internal/attendance"
 	"name/backend/internal/audit"
 	"name/backend/internal/auth"
@@ -23,6 +24,7 @@ import (
 	"name/backend/internal/orgstructure"
 	"name/backend/internal/projects"
 	"name/backend/internal/rbac"
+	"name/backend/internal/reports"
 	"name/backend/internal/shifts"
 	"name/backend/internal/sync"
 	"name/backend/internal/tasks"
@@ -97,9 +99,12 @@ func main() {
 	mux.HandleFunc("GET /api/v1/sync/conflicts", syncHandler.Conflicts)
 	mux.HandleFunc("POST /api/v1/sync/conflicts/resolve", syncHandler.ResolveConflict)
 	taskHandler := tasks.Handler{DB: pool, Auth: authHandler, StoragePath: cfg.StoragePath, ClamScanPath: cfg.ClamScanPath, RetentionDays: cfg.RetentionDays, BackupVerified: cfg.BackupVerified}
+	reportsHandler := reports.Handler{DB: pool, Auth: authHandler}
 	if pool != nil {
 		go taskHandler.StartRecurringWorker(context.Background())
 		go taskHandler.StartRetentionWorker(context.Background())
+		go reportsHandler.StartScheduleWorker(context.Background())
+		log.Println("started report schedule worker")
 	}
 	mux.Handle("GET /api/v1/tasks", authHandler.RequirePermission("tasks.read", http.HandlerFunc(taskHandler.List)))
 	mux.Handle("POST /api/v1/tasks", authHandler.RequirePermission("tasks.manage", http.HandlerFunc(taskHandler.Create)))
@@ -160,6 +165,15 @@ func main() {
 	mux.Handle("POST /api/v1/expenses", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.Expenses)))
 	mux.Handle("POST /api/v1/expenses/{id}/submit", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.Submit)))
 	mux.Handle("POST /api/v1/expenses/{id}/pay", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.MarkPaid)))
+	analyticsHandler := analytics.Handler{DB: pool, Auth: authHandler}
+	mux.Handle("GET /api/v1/analytics/spending", authHandler.RequirePermission("analytics.read", http.HandlerFunc(analyticsHandler.Spending)))
+	mux.Handle("GET /api/v1/analytics/attendance", authHandler.RequirePermission("analytics.read", http.HandlerFunc(analyticsHandler.Attendance)))
+	mux.Handle("GET /api/v1/analytics/sales", authHandler.RequirePermission("analytics.read", http.HandlerFunc(analyticsHandler.Sales)))
+	mux.Handle("GET /api/v1/reports", authHandler.RequirePermission("reports.read", http.HandlerFunc(reportsHandler.Definitions)))
+	mux.Handle("POST /api/v1/reports", authHandler.RequirePermission("reports.manage", http.HandlerFunc(reportsHandler.Definitions)))
+	mux.Handle("GET /api/v1/reports/schedules", authHandler.RequirePermission("reports.read", http.HandlerFunc(reportsHandler.Schedules)))
+	mux.Handle("POST /api/v1/reports/schedules", authHandler.RequirePermission("reports.manage", http.HandlerFunc(reportsHandler.Schedules)))
+	mux.Handle("POST /api/v1/reports/{id}/export", authHandler.RequirePermission("reports.read", http.HandlerFunc(reportsHandler.Export)))
 	workflowHandler := workflow.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/workflow/definitions", authHandler.RequirePermission("workflow.read", http.HandlerFunc(workflowHandler.Definitions)))
 	mux.Handle("POST /api/v1/workflow/definitions", authHandler.RequirePermission("workflow.manage", http.HandlerFunc(workflowHandler.CreateDefinition)))
