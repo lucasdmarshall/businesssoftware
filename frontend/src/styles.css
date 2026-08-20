@@ -155,6 +155,20 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .finance-tab:hover { color: var(--text); }
 .checkbox-inline { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
 
+.crm-pipeline-board { display: grid; grid-template-columns: repeat(5, minmax(160px, 1fr)); gap: 14px; margin: 28px 0 48px; overflow-x: auto; }
+.crm-pipeline-column { border-top: 1px solid var(--line); padding-top: 12px; min-width: 160px; }
+.crm-pipeline-column h3 { margin: 0 0 14px; font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: .02em; text-transform: uppercase; }
+.crm-pipeline-deal { display: grid; gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.crm-pipeline-deal strong { font-size: 12px; }
+.crm-pipeline-deal small { color: var(--muted); font-size: 10px; }
+.crm-pipeline-empty { color: var(--faint); font-size: 11px; margin: 8px 0; }
+@media (max-width: 1100px) {
+  .crm-pipeline-board { grid-template-columns: repeat(2, minmax(180px, 1fr)); }
+}
+@media (max-width: 700px) {
+  .crm-pipeline-board { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 960px) {
   .attendance-desk { grid-template-columns: 1fr; }
   .attendance-policy { flex-direction: column; align-items: flex-start; }

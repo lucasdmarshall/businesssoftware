@@ -247,6 +247,7 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Opportunities
 - [x] Sales pipeline (opportunity stages)
 - [x] Sales activities (CRM activity log)
+- [x] Pipeline production depth (stage history, lead convert, suite UI, analytics)
 
 ### IT and Operations
 

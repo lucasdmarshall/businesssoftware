@@ -167,7 +167,7 @@ Completed in this milestone:
 - New HR, Sales, and IT views and an expanded Finance view; all module endpoints are RBAC-gated (`hr.*`, `sales.*`, `itops.*`, `finance.*`) and use the shared `httpapi` conventions
 - Phase 8 analytics and executive control: spending/attendance/sales summary APIs (`analytics.read`), saved report definitions and schedules (migration `021_analytics_reports.sql`), JSON export with `report.exported` audit events, and a schedule worker that advances due runs and notifies creators
 - Reports UI covers period summaries, save/export custom reports, and schedule cadence; Overview surfaces 30-day spending and attendance metrics alongside the existing KPI dashboard
-- Sales summary returns a stable placeholder (`module_available: false`) until the CRM module lands
+- Sales summary is live from CRM (`module_available: true`) via `/analytics/sales`
 - **Leave chosen as first production-depth module:** balances, policies, half-days, overlap checks, cancel flows, attendance + calendar side effects on approve, optional `leave` workflow routing, and a rebuilt Leave UI (migration `027_leave_production.sql`)
 - Design system now documents required custom **Dropdown / DatePicker / TimePicker** controls in `Design.md` and `Language-and-Design-System.md`
 - **Attendance chosen as second production-depth module:** worked hours, check-in/out validation, leave-day block, remote status, manager today rollup + date filter, durable correction history with notifications (migration `028_attendance_production.sql`)
@@ -178,11 +178,12 @@ Completed in this milestone:
 - **Department data isolation:** Leave / Attendance / Tasks / Activity / Calendar / Schedule accept `department_id` and filter to `user_departments` members; People UI assigns membership + head via `/user-departments`
 - **Workflow production depth:** step SLA → instance `due_at`, upcoming/overdue reminder worker, time-boxed delegated approval coverage, set-deadline control — migration `035_workflow_delegation_reminders.sql`
 - **Finance depth:** AP/AR aging reports + bank reconciliation (accounts, statement lines, match/unmatch/exclude) — migration `036_finance_aging_bank_recon.sql`
+- **CRM pipeline production depth:** stage board + history, lead convert, contacts/activities suite tabs, live analytics sales summary — migration `037_crm_pipeline_production.sql`
 
 Next actions:
 
 1. Phase 9 packaging / licensing polish.
-2. Sales/CRM and IT/Ops remain scaffold-level until scheduled for depth.
+2. IT/Ops remains scaffold-level until scheduled for depth.
 
 ## Active Work
 
