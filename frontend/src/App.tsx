@@ -560,7 +560,7 @@ function DepartmentWorkspaceShell({ workspace, view, onViewChange, onExit, syste
           : view === "attendance" ? <AttendanceView canManage={manage("attendance") || Boolean(currentUser?.permissions?.includes("attendance.manage"))} canCompanySettings={Boolean(currentUser?.permissions?.includes("organization.manage"))} />
           : view === "leave" ? <LeaveView canManage={manage("leave") || Boolean(currentUser?.permissions?.includes("leave.manage"))} currentEmail={currentUser?.email ?? ""} />
           : view === "calendar" ? <CalendarView />
-          : view === "schedule" ? <ScheduleView />
+          : view === "schedule" ? <ScheduleView canManage={manage("schedule") || Boolean(currentUser?.permissions?.includes("shifts.manage"))} />
           : view === "tasks" ? <WorkView />
           : view === "activity" ? <ActivityView />
           : view === "settings" ? <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">{workspace.name}</p><h1>Settings.</h1><p className="lede">Department settings stay inside this workspace. Company-wide lookup lists remain under Company → Settings.</p></div></div></section>
