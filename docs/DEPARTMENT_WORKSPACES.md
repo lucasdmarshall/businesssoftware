@@ -83,8 +83,8 @@ Department calendars are department-scoped **and** may include events marked
 - Workspace foundation: migration `030_department_workspaces.sql`
 - Position seed + reorder: migration `031_department_position_access.sql`
 - Department Finance tracking table: migration `032_department_finance.sql`  
-- Remaining gap: some reused screens (Leave/Attendance/Tasks) still need
-  department-scoped queries end-to-end  
+- Remaining gap: Calendar / Schedule still need the same `department_id`
+  query pattern end-to-end (Leave / Attendance / Tasks / Activity are scoped)
 
 ## Non-goals (for the first cut)
 

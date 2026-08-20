@@ -562,6 +562,7 @@ func (h Handler) Access(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		UserID     string        `json:"user_id"`
 		PositionID string        `json:"position_id"`
+		IsHead     *bool         `json:"is_head"`
 		Modules    []ModuleGrant `json:"modules"`
 	}
 	if json.NewDecoder(r.Body).Decode(&input) != nil || input.UserID == "" {
@@ -574,6 +575,24 @@ func (h Handler) Access(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
+
+	if input.IsHead != nil && input.PositionID == "" {
+		_ = SeedDepartmentPositions(r.Context(), h.DB, user.OrganizationID, deptID)
+		posCode := "employee"
+		if *input.IsHead {
+			posCode = "head"
+		}
+		_, err = tx.Exec(r.Context(), `
+			UPDATE user_departments SET is_head=$1, position_id=p.id
+			FROM department_positions p
+			WHERE user_departments.department_id=$2 AND user_departments.user_id=$3
+			  AND p.department_id=$2 AND p.code=$4`,
+			*input.IsHead, deptID, input.UserID, posCode)
+		if err != nil {
+			httpapi.WriteError(w, http.StatusBadRequest, "update_failed", "user is not in this department")
+			return
+		}
+	}
 
 	if input.PositionID != "" {
 		var code string

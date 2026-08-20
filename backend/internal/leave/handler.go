@@ -16,6 +16,7 @@ import (
 	"name/backend/internal/httpapi"
 	"name/backend/internal/notify"
 	"name/backend/internal/workflow"
+	"name/backend/internal/workspace"
 )
 
 type Handler struct {
@@ -79,15 +80,26 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filter := r.URL.Query().Get("filter")
+	deptID := strings.TrimSpace(r.URL.Query().Get("department_id"))
+	if deptID != "" && !workspace.CanEnterDepartment(r.Context(), h.DB, h.Auth, user, deptID) {
+		httpapi.WriteError(w, http.StatusForbidden, "forbidden", "you cannot view leave for this department")
+		return
+	}
 	query := `
 		SELECT l.id,l.requested_by,u.display_name,l.leave_type,l.start_date::text,l.end_date::text,
 		       l.total_days,l.half_day,l.reason,l.status,COALESCE(l.workflow_instance_id::text,''),l.created_at
 		FROM leave_requests l JOIN users u ON u.id=l.requested_by
 		WHERE l.organization_id=$1`
 	args := []any{user.OrganizationID}
+	argN := 2
+	if deptID != "" {
+		query += ` AND ` + workspace.MemberExistsSQL("l.requested_by", argN)
+		args = append(args, deptID)
+		argN++
+	}
 	switch filter {
 	case "mine":
-		query += ` AND l.requested_by=$2`
+		query += fmt.Sprintf(` AND l.requested_by=$%d`, argN)
 		args = append(args, user.ID)
 	case "pending":
 		query += ` AND l.status='pending'`
@@ -328,6 +340,11 @@ func (h Handler) Balances(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		mine := r.URL.Query().Get("mine") == "1" || !h.Auth.HasPermission(r.Context(), user, "leave.manage")
+		deptID := strings.TrimSpace(r.URL.Query().Get("department_id"))
+		if deptID != "" && !workspace.CanEnterDepartment(r.Context(), h.DB, h.Auth, user, deptID) {
+			httpapi.WriteError(w, http.StatusForbidden, "forbidden", "you cannot view leave balances for this department")
+			return
+		}
 		query := `
 			SELECT b.id, b.user_id, u.display_name, b.leave_type, b.year, b.entitled_days, b.used_days, b.carried_over_days,
 			       COALESCE((SELECT SUM(lr.total_days) FROM leave_requests lr
@@ -337,8 +354,14 @@ func (h Handler) Balances(w http.ResponseWriter, r *http.Request) {
 			FROM leave_balances b JOIN users u ON u.id=b.user_id
 			WHERE b.organization_id=$1 AND b.year=$2`
 		args := []any{user.OrganizationID, year}
+		argN := 3
+		if deptID != "" {
+			query += ` AND ` + workspace.MemberExistsSQL("b.user_id", argN)
+			args = append(args, deptID)
+			argN++
+		}
 		if mine {
-			query += ` AND b.user_id=$3`
+			query += fmt.Sprintf(` AND b.user_id=$%d`, argN)
 			args = append(args, user.ID)
 		}
 		query += ` ORDER BY u.display_name, b.leave_type`

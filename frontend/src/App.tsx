@@ -557,12 +557,12 @@ function DepartmentWorkspaceShell({ workspace, view, onViewChange, onExit, syste
           : view === "salary" ? <DeptSalaryView departmentId={workspace.id} canManage={manage("salary")} />
           : view === "bonus" ? <DeptBonusView departmentId={workspace.id} canManage={manage("bonus")} />
           : view === "finance" ? <DeptFinanceView departmentId={workspace.id} canManage={manage("finance")} hasSalary={Boolean(allowed.get("salary"))} hasBonus={Boolean(allowed.get("bonus"))} onOpen={(code) => onViewChange(code)} />
-          : view === "attendance" ? <AttendanceView canManage={manage("attendance") || Boolean(currentUser?.permissions?.includes("attendance.manage"))} canCompanySettings={Boolean(currentUser?.permissions?.includes("organization.manage"))} />
-          : view === "leave" ? <LeaveView canManage={manage("leave") || Boolean(currentUser?.permissions?.includes("leave.manage"))} currentEmail={currentUser?.email ?? ""} />
+          : view === "attendance" ? <AttendanceView departmentId={workspace.id} canManage={manage("attendance") || Boolean(currentUser?.permissions?.includes("attendance.manage"))} canCompanySettings={Boolean(currentUser?.permissions?.includes("organization.manage"))} />
+          : view === "leave" ? <LeaveView departmentId={workspace.id} canManage={manage("leave") || Boolean(currentUser?.permissions?.includes("leave.manage"))} currentEmail={currentUser?.email ?? ""} />
           : view === "calendar" ? <CalendarView />
           : view === "schedule" ? <ScheduleView canManage={manage("schedule") || Boolean(currentUser?.permissions?.includes("shifts.manage"))} />
-          : view === "tasks" ? <WorkView />
-          : view === "activity" ? <ActivityView />
+          : view === "tasks" ? <WorkView departmentId={workspace.id} />
+          : view === "activity" ? <ActivityView departmentId={workspace.id} />
           : view === "settings" ? <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">{workspace.name}</p><h1>Settings.</h1><p className="lede">Department settings stay inside this workspace. Company-wide lookup lists remain under Company → Settings.</p></div></div></section>
           : <DeptOverviewView workspace={workspace} />}
       </main>
@@ -934,7 +934,7 @@ function DeptFinanceView({ departmentId, canManage, hasSalary, hasBonus, onOpen 
   );
 }
 
-function WorkView() {
+function WorkView({ departmentId }: { departmentId?: string }) {
   const [tasks, setTasks] = useState<LocalTask[]>([]);
   const [outboxStatuses, setOutboxStatuses] = useState<Map<string, string>>(new Map());
   const [title, setTitle] = useState("");
@@ -942,7 +942,7 @@ function WorkView() {
   const [dueAt, setDueAt] = useState("");
   const [assignedTo, setAssignedTo] = useState("");
   const [recurrenceRule, setRecurrenceRule] = useState("");
-  const [taskScope, setTaskScope] = useState("organization");
+  const [taskScope, setTaskScope] = useState(departmentId ? "department" : "organization");
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
@@ -955,13 +955,23 @@ function WorkView() {
     const loadTasks = async () => {
       try {
         await syncPendingOperations(apiBase);
-        const response = await fetch(`${apiBase}/tasks?scope=${taskScope}`, { credentials: "include" });
+        const scope = departmentId ? "department" : taskScope;
+        const deptQuery = departmentId ? `&department_id=${encodeURIComponent(departmentId)}` : "";
+        const response = await fetch(`${apiBase}/tasks?scope=${scope}${deptQuery}`, { credentials: "include" });
         if (!response.ok) throw new Error("offline");
         const remoteTasks = await response.json() as Array<Record<string, string>>;
         const normalized = remoteTasks.map((task) => ({ id: task.id, title: task.title, description: task.description ?? "", status: task.status, priority: task.priority, dueAt: task.due_at ?? null, assignedTo: task.assigned_to ?? null, recurrenceRule: task.recurrence_rule ?? null, recurrenceNextAt: task.recurrence_next_at ?? null, createdAt: task.created_at, updatedAt: task.updated_at }));
         setTasks(normalized);
         await cacheTasks(normalized);
-        const usersResponse = await fetch(`${apiBase}/users`, { credentials: "include" }); if (usersResponse.ok) setUsers(await usersResponse.json());
+        if (departmentId) {
+          const membersRes = await fetch(`${apiBase}/workspaces/departments/${departmentId}/members`, { credentials: "include" });
+          if (membersRes.ok) {
+            const members = await membersRes.json() as Array<{ user_id: string; display_name: string; email?: string }>;
+            setUsers(members.map((m) => ({ id: m.user_id, display_name: m.display_name, email: m.email ?? "", status: "active" })));
+          }
+        } else {
+          const usersResponse = await fetch(`${apiBase}/users`, { credentials: "include" }); if (usersResponse.ok) setUsers(await usersResponse.json());
+        }
       } catch {
         try { setTasks(await getLocalTasks()); } catch { setTasks([]); }
       }
@@ -970,7 +980,7 @@ function WorkView() {
     const handleOnline = () => { void loadTasks(); };
     window.addEventListener("online", handleOnline);
     return () => window.removeEventListener("online", handleOnline);
-  }, [taskScope]);
+  }, [taskScope, departmentId]);
 
   useEffect(() => {
     void getOutboxStatuses(tasks.map((task) => task.id)).then(setOutboxStatuses).catch(() => undefined);
@@ -1042,14 +1052,14 @@ function WorkView() {
   };
 
   return <section className="content-wrap">
-    <div className="page-heading"><div><p className="eyebrow">Work</p><h1>Keep work moving.</h1><p className="lede">Tasks stay available on this device, even when the company server is offline.</p></div></div>
+    <div className="page-heading"><div><p className="eyebrow">{departmentId ? "Department tasks" : "Work"}</p><h1>{departmentId ? "Work inside this department." : "Keep work moving."}</h1><p className="lede">{departmentId ? "Only people in this department appear here — other departments cannot see these tasks." : "Tasks stay available on this device, even when the company server is offline."}</p></div></div>
     {message && <p className="inline-message">{message}</p>}
     {conflicts.length > 0 && <div className="conflict-panel">
       <div className="section-heading"><div><p className="eyebrow">Sync conflicts</p><h2>{conflicts.length} to review</h2></div></div>
       <div className="record-list">{conflicts.map((conflict) => <div className="record-row" key={conflict.id}><span className="record-avatar leave-rejected">!</span><span className="record-copy"><strong>{String(conflict.client_payload.title ?? conflict.entity)}</strong><small>{conflict.entity} · {conflict.reason}</small></span><span className="record-actions"><button className="text-button" type="button" onClick={() => void resolveConflict(conflict.id, "accept_client")}>Keep mine</button><button className="text-button muted" type="button" onClick={() => void resolveConflict(conflict.id, "accept_server")}>Keep server</button></span></div>)}</div>
     </div>}
     <form className="task-composer" onSubmit={createTask}><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What needs to get done?" required /><Dropdown value={priority} options={PRIORITY_OPTIONS} onChange={setPriority} ariaLabel="Priority" /><DatePicker value={dueAt} onChange={setDueAt} placeholder="Due date" ariaLabel="Due date" /><Dropdown value={assignedTo} options={[{ value: "", label: "Assign to me" }, ...users.map((user) => ({ value: user.id, label: user.display_name }))]} onChange={setAssignedTo} ariaLabel="Assignee" /><Dropdown value={recurrenceRule} options={RECURRENCE_OPTIONS} onChange={setRecurrenceRule} ariaLabel="Repeat" /><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : "Add task"}</button></form>
-    <div className="section-heading task-heading"><div><p className="eyebrow">Queue</p><h2>{tasks.length} tasks</h2></div><div className="select-inline"><Dropdown value={taskScope} options={TASK_SCOPE_OPTIONS} onChange={setTaskScope} ariaLabel="Task scope" /></div></div>
+    <div className="section-heading task-heading"><div><p className="eyebrow">Queue</p><h2>{tasks.length} tasks</h2></div>{!departmentId && <div className="select-inline"><Dropdown value={taskScope} options={TASK_SCOPE_OPTIONS} onChange={setTaskScope} ariaLabel="Task scope" /></div>}</div>
     <div className="task-list">{tasks.map((task) => { const syncStatus = outboxStatuses.get(task.id); return <div key={task.id}><div className="task-row"><span className={`task-status ${task.status}`} /><span className="record-copy"><strong>{task.title}</strong><small>{task.priority} priority · {task.dueAt ? `due ${task.dueAt.slice(0, 10)} · ` : ""}{task.assignedTo ? "assigned" : "unassigned"} · {syncStatus === "conflict" ? "server conflict" : syncStatus === "failed" ? "sync failed" : syncStatus === "pending" ? "waiting to sync" : "synced"}</small></span><button className="text-button" type="button" onClick={() => void openComments(task.id)}>Comments</button>{!syncStatus && <button className="text-button muted" type="button" onClick={() => void deleteTask(task.id)}>Delete</button>}{syncStatus === "failed" || syncStatus === "conflict" ? <span className="task-actions"><button className="text-button" type="button" onClick={() => void retryTask(task.id)}>Retry</button>{syncStatus === "conflict" && <button className="text-button muted" type="button" onClick={() => void discardTask(task.id)}>Discard</button>}</span> : <span className={`status-pill priority-${task.priority}`}>{task.status.replace("_", " ")}</span>}</div>{commentTaskId === task.id && <div className="comment-thread">{comments.map((comment) => <p key={comment.id}><strong>{comment.author_name}</strong> {comment.body}</p>)}<form onSubmit={addComment}><input value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder="Write a comment or @mention someone" /><button className="text-button" type="submit">Post</button></form></div>}</div>; })}</div>
   </section>;
 }
@@ -1059,7 +1069,7 @@ function formatTime(value: string | null | undefined) {
   return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function AttendanceView({ canManage, canCompanySettings }: { canManage: boolean; canCompanySettings: boolean }) {
+function AttendanceView({ departmentId, canManage, canCompanySettings }: { departmentId?: string; canManage: boolean; canCompanySettings: boolean }) {
   type DeskPerson = { user_id: string; display_name: string; email: string; position_id: string; position_name: string; employee_id: string };
   type TeamRow = LocalAttendance & { hours?: number; display_name?: string; position?: string; position_id?: string; employee_id?: string; early_by?: string; late_by?: string };
   const [records, setRecords] = useState<Array<LocalAttendance & { hours?: number; early_by?: string; late_by?: string }>>([]);
@@ -1108,9 +1118,10 @@ function AttendanceView({ canManage, canCompanySettings }: { canManage: boolean;
         setPolicyTime(clockToPicker(policy.expected_check_in_time || "09:00:00"));
       }
       if (canManage) {
+        const deptQ = departmentId ? `&department_id=${encodeURIComponent(departmentId)}` : "";
         const [orgRes, peopleRes] = await Promise.all([
-          fetch(`${apiBase}/attendance/organization?limit=200`, { credentials: "include" }),
-          fetch(`${apiBase}/attendance/people`, { credentials: "include" }),
+          fetch(`${apiBase}/attendance/organization?limit=200${deptQ}`, { credentials: "include" }),
+          fetch(`${apiBase}/attendance/people${departmentId ? `?department_id=${encodeURIComponent(departmentId)}` : ""}`, { credentials: "include" }),
         ]);
         if (orgRes.ok) setManagerRecords(await orgRes.json());
         if (peopleRes.ok) setPeople(await peopleRes.json());
@@ -1120,7 +1131,7 @@ function AttendanceView({ canManage, canCompanySettings }: { canManage: boolean;
     }
   };
 
-  useEffect(() => { void load(); const onOnline = () => void load(); window.addEventListener("online", onOnline); return () => window.removeEventListener("online", onOnline); }, [canManage]);
+  useEffect(() => { void load(); const onOnline = () => void load(); window.addEventListener("online", onOnline); return () => window.removeEventListener("online", onOnline); }, [canManage, departmentId]);
 
   const saveCompanyCheckIn = async () => {
     const response = await fetch(`${apiBase}/attendance/settings`, {
@@ -1374,7 +1385,7 @@ function inclusiveLeaveDays(start: string, end: string) {
   return Math.floor((b - a) / 86400000) + 1;
 }
 
-function LeaveView({ canManage, currentEmail }: { canManage: boolean; currentEmail: string }) {
+function LeaveView({ departmentId, canManage, currentEmail }: { departmentId?: string; canManage: boolean; currentEmail: string }) {
   const [requests, setRequests] = useState<Array<LeaveRequest & LocalLeave>>([]);
   const [balances, setBalances] = useState<LeaveBalance[]>([]);
   const [policies, setPolicies] = useState<LeavePolicy[]>([]);
@@ -1393,21 +1404,38 @@ function LeaveView({ canManage, currentEmail }: { canManage: boolean; currentEma
   const load = async () => {
     try {
       await syncPendingOperations(apiBase);
-      const query = filter === "all" ? "" : `?filter=${filter}`;
+      const params = new URLSearchParams();
+      if (filter !== "all") params.set("filter", filter);
+      if (departmentId) params.set("department_id", departmentId);
+      const query = params.toString() ? `?${params}` : "";
       const response = await fetch(`${apiBase}/leave${query}`, { credentials: "include" });
       if (!response.ok) throw new Error("offline");
       const remote = await response.json() as Array<LeaveRequest & LocalLeave>;
       setRequests(remote);
       await cacheLeave(remote);
+      const balanceQ = departmentId ? `?department_id=${encodeURIComponent(departmentId)}` : "";
       const [balancesRes, policiesRes, usersRes, meRes] = await Promise.all([
-        fetch(`${apiBase}/leave/balances`, { credentials: "include" }),
+        fetch(`${apiBase}/leave/balances${balanceQ}`, { credentials: "include" }),
         fetch(`${apiBase}/leave/policies`, { credentials: "include" }),
-        canManage ? fetch(`${apiBase}/users`, { credentials: "include" }) : Promise.resolve(null),
+        canManage
+          ? (departmentId
+            ? fetch(`${apiBase}/workspaces/departments/${departmentId}/members`, { credentials: "include" })
+            : fetch(`${apiBase}/users`, { credentials: "include" }))
+          : Promise.resolve(null),
         fetch(`${apiBase}/auth/me`, { credentials: "include" }),
       ]);
       if (balancesRes.ok) setBalances(await balancesRes.json());
       if (policiesRes.ok) setPolicies(await policiesRes.json());
-      if (usersRes?.ok) setUsers(await usersRes.json());
+      if (usersRes?.ok) {
+        const payload = await usersRes.json();
+        if (departmentId) {
+          setUsers((payload as Array<{ user_id: string; display_name: string; email?: string }>).map((m) => ({
+            id: m.user_id, display_name: m.display_name, email: m.email ?? "", status: "active",
+          })));
+        } else {
+          setUsers(payload);
+        }
+      }
       if (meRes.ok) {
         const profile = await meRes.json() as { id?: string; email?: string };
         setMe({ id: profile.id ?? "", email: profile.email ?? currentEmail });
@@ -1417,7 +1445,7 @@ function LeaveView({ canManage, currentEmail }: { canManage: boolean; currentEma
     }
   };
 
-  useEffect(() => { void load(); const onOnline = () => void load(); window.addEventListener("online", onOnline); return () => window.removeEventListener("online", onOnline); }, [filter, canManage]);
+  useEffect(() => { void load(); const onOnline = () => void load(); window.addEventListener("online", onOnline); return () => window.removeEventListener("online", onOnline); }, [filter, canManage, departmentId]);
 
   const createRequest = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1799,10 +1827,16 @@ function ScheduleView({ canManage }: { canManage: boolean }) {
   );
 }
 
-function ActivityView() {
+function ActivityView({ departmentId }: { departmentId?: string }) {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
-  useEffect(() => { void fetch(`${apiBase}/audit-logs`, { credentials: "include" }).then((response) => response.ok ? response.json() : []).then(setEntries).catch(() => setEntries([])); }, []);
-  return <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">Activity</p><h1>Know what changed.</h1><p className="lede">A durable record of privileged actions in this private installation.</p></div></div><div className="section-heading task-heading"><div><p className="eyebrow">Audit trail</p><h2>{entries.length} events</h2></div></div><div className="activity-list">{entries.map((entry) => <div className="activity-row" key={entry.id}><span className="activity-icon"><Activity size={16} /></span><span className="activity-copy"><strong>{entry.action}</strong><small>{entry.actor_name} · {entry.entity_type} · {new Date(entry.created_at).toLocaleString()}</small></span></div>)}</div></section>;
+  useEffect(() => {
+    const q = departmentId ? `?department_id=${encodeURIComponent(departmentId)}` : "";
+    void fetch(`${apiBase}/audit-logs${q}`, { credentials: "include" })
+      .then((response) => response.ok ? response.json() : [])
+      .then(setEntries)
+      .catch(() => setEntries([]));
+  }, [departmentId]);
+  return <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">Activity</p><h1>{departmentId ? "What changed here." : "Know what changed."}</h1><p className="lede">{departmentId ? "Audit events involving this department’s people and department-scoped actions." : "A durable record of privileged actions in this private installation."}</p></div></div><div className="section-heading task-heading"><div><p className="eyebrow">Audit trail</p><h2>{entries.length} events</h2></div></div><div className="activity-list">{entries.map((entry) => <div className="activity-row" key={entry.id}><span className="activity-icon"><Activity size={16} /></span><span className="activity-copy"><strong>{entry.action}</strong><small>{entry.actor_name} · {entry.entity_type} · {new Date(entry.created_at).toLocaleString()}</small></span></div>)}</div></section>;
 }
 
 type DashboardSummary = { scope: string; open_tasks: number; in_progress_tasks: number; overdue_tasks: number; done_tasks: number; approvals_waiting: number; upcoming_events: number; unread_notifications: number; department_breakdown: Array<{ department: string; open_tasks: number }> };
@@ -2789,26 +2823,30 @@ function WorkflowView() {
 function PeopleView() {
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [departments, setDepartments] = useState<DepartmentRecord[]>([]);
+  const [memberships, setMemberships] = useState<Array<{ user_id: string; user_name: string; department_id: string; department_name: string; is_primary: boolean; is_head: boolean; position_name: string }>>([]);
   const [roles, setRoles] = useState<RoleRecord[]>([]);
   const [permissions, setPermissions] = useState<PermissionRecord[]>([]);
   const [roleForm, setRoleForm] = useState({ code: "", name: "", permissions: [] as string[] });
   const [assignment, setAssignment] = useState({ user_id: "", role_id: "" });
+  const [membershipForm, setMembershipForm] = useState({ user_id: "", department_id: "", is_head: false, is_primary: true });
   const [showUserForm, setShowUserForm] = useState(false);
   const [userForm, setUserForm] = useState({ display_name: "", email: "", password: "" });
   const [departmentForm, setDepartmentForm] = useState({ name: "", slug: "" });
   const [message, setMessage] = useState("");
 
   const load = async () => {
-    const [usersResponse, departmentsResponse, rolesResponse, permissionsResponse] = await Promise.all([
+    const [usersResponse, departmentsResponse, rolesResponse, permissionsResponse, membershipsResponse] = await Promise.all([
       fetch(`${apiBase}/users`, { credentials: "include" }),
       fetch(`${apiBase}/departments`, { credentials: "include" }),
       fetch(`${apiBase}/roles`, { credentials: "include" }),
       fetch(`${apiBase}/permissions`, { credentials: "include" }),
+      fetch(`${apiBase}/user-departments`, { credentials: "include" }),
     ]);
     if (usersResponse.ok) setUsers(await usersResponse.json());
     if (departmentsResponse.ok) setDepartments(await departmentsResponse.json());
     if (rolesResponse.ok) setRoles(await rolesResponse.json());
     if (permissionsResponse.ok) setPermissions(await permissionsResponse.json());
+    if (membershipsResponse.ok) setMemberships(await membershipsResponse.json());
   };
 
   useEffect(() => { void load(); }, []);
@@ -2834,6 +2872,22 @@ function PeopleView() {
     await load();
   };
 
+  const assignMembership = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setMessage("");
+    const response = await fetch(`${apiBase}/user-departments`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(membershipForm),
+    });
+    if (!response.ok) {
+      setMessage((await response.json()).error ?? "Could not assign department membership");
+      return;
+    }
+    setMessage(membershipForm.is_head ? "Assigned as department head" : "Assigned to department");
+    setMembershipForm({ user_id: "", department_id: "", is_head: false, is_primary: true });
+    await load();
+  };
+
   const createRole = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const response = await fetch(`${apiBase}/roles`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(roleForm) }); if (!response.ok) { setMessage("Role could not be created"); return; } setRoleForm({ code: "", name: "", permissions: [] }); setMessage("Role created"); await load(); };
   const assignRole = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const response = await fetch(`${apiBase}/user-roles`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(assignment) }); setMessage(response.ok ? "Role assigned" : "Role could not be assigned"); };
 
@@ -2851,11 +2905,37 @@ function PeopleView() {
   };
 
   return <section className="content-wrap">
-    <div className="page-heading"><div><p className="eyebrow">Organization</p><h1>People & teams.</h1><p className="lede">Manage the people and departments in this private installation.</p></div><button className="primary-button" type="button" onClick={() => setShowUserForm((value) => !value)}>{showUserForm ? "Close form" : "Add person"}</button></div>
+    <div className="page-heading"><div><p className="eyebrow">Organization</p><h1>People & teams.</h1><p className="lede">Manage people, departments, and who belongs in each department workspace.</p></div><button className="primary-button" type="button" onClick={() => setShowUserForm((value) => !value)}>{showUserForm ? "Close form" : "Add person"}</button></div>
     {message && <p className="inline-message">{message}</p>}
     <div className="people-grid">
       <div className="people-section"><div className="section-heading"><div><p className="eyebrow">Directory</p><h2>{users.length} people</h2></div></div><div className="record-list">{users.map((user) => <div className="record-row" key={user.id}><span className="record-avatar">{user.display_name.slice(0, 1).toUpperCase()}</span><span className="record-copy"><strong>{user.display_name}</strong><small>{user.email}</small></span><span className={`status-pill ${user.status === "offboarded" ? "leave-rejected" : ""}`}>{user.status}</span>{user.status !== "offboarded" && <span className="record-actions"><button className="text-button muted" type="button" onClick={() => void resetPassword(user)}>Reset</button><button className="text-button muted" type="button" onClick={() => void offboard(user)}>Offboard</button></span>}</div>)}</div></div>
       <div className="people-section"><div className="section-heading"><div><p className="eyebrow">Structure</p><h2>{departments.length} departments</h2></div></div><form className="compact-form" onSubmit={createDepartment}><input value={departmentForm.name} onChange={(event) => setDepartmentForm({ ...departmentForm, name: event.target.value })} placeholder="Department name" required /><input value={departmentForm.slug} onChange={(event) => setDepartmentForm({ ...departmentForm, slug: event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-") })} placeholder="slug" required /><button className="text-button" type="submit">Add department <ArrowUpRight size={15} /></button></form><div className="record-list">{departments.map((department) => <div className="record-row" key={department.id}><span className="record-avatar department-avatar"><BriefcaseBusiness size={15} /></span><span className="record-copy"><strong>{department.name}</strong><small>{department.slug}</small></span></div>)}</div></div>
+    </div>
+    <div className="rbac-panel">
+      <div className="section-heading"><div><p className="eyebrow">Department membership</p><h2>{memberships.length} assignments</h2></div></div>
+      <p className="lede" style={{ marginBottom: 16 }}>Assign people to a department so they can enter that workspace. Heads get manage access by default.</p>
+      <form className="compact-form role-form" onSubmit={(event) => void assignMembership(event)}>
+        <div className="form-grid">
+          <Dropdown value={membershipForm.user_id} options={[{ value: "", label: "Select person" }, ...users.filter((u) => u.status !== "offboarded").map((user) => ({ value: user.id, label: user.display_name }))]} onChange={(value) => setMembershipForm({ ...membershipForm, user_id: value })} ariaLabel="Person" placeholder="Select person" />
+          <Dropdown value={membershipForm.department_id} options={[{ value: "", label: "Select department" }, ...departments.map((dept) => ({ value: dept.id, label: dept.name }))]} onChange={(value) => setMembershipForm({ ...membershipForm, department_id: value })} ariaLabel="Department" placeholder="Select department" />
+          <label className="checkbox-inline"><input type="checkbox" checked={membershipForm.is_head} onChange={(event) => setMembershipForm({ ...membershipForm, is_head: event.target.checked })} /> Department head</label>
+          <label className="checkbox-inline"><input type="checkbox" checked={membershipForm.is_primary} onChange={(event) => setMembershipForm({ ...membershipForm, is_primary: event.target.checked })} /> Primary department</label>
+        </div>
+        <button className="primary-button" type="submit">Assign to department</button>
+      </form>
+      <div className="record-list" style={{ marginTop: 18 }}>
+        {memberships.map((row) => (
+          <div className="record-row" key={`${row.user_id}:${row.department_id}`}>
+            <span className="record-avatar">{row.user_name.slice(0, 1).toUpperCase()}</span>
+            <span className="record-copy">
+              <strong>{row.user_name}</strong>
+              <small>{row.department_name}{row.position_name ? ` · ${row.position_name}` : ""}{row.is_primary ? " · primary" : ""}</small>
+            </span>
+            <span className={`status-pill ${row.is_head ? "leave-approved" : ""}`}>{row.is_head ? "head" : "member"}</span>
+          </div>
+        ))}
+        {memberships.length === 0 && <p className="lede">No memberships yet — assign someone above so they can open a department workspace.</p>}
+      </div>
     </div>
     {showUserForm && <form className="user-form" onSubmit={createUser}><p className="eyebrow">New person</p><div className="form-grid"><input value={userForm.display_name} onChange={(event) => setUserForm({ ...userForm, display_name: event.target.value })} placeholder="Full name" required /><input type="email" value={userForm.email} onChange={(event) => setUserForm({ ...userForm, email: event.target.value })} placeholder="Email" required /><input type="password" value={userForm.password} onChange={(event) => setUserForm({ ...userForm, password: event.target.value })} placeholder="Temporary password (12+ characters)" minLength={12} required /></div><button className="primary-button" type="submit">Create person</button></form>}
     {roles.length > 0 && <div className="rbac-panel"><div className="section-heading"><div><p className="eyebrow">Access control</p><h2>{roles.length} roles</h2></div></div><div className="record-list">{roles.map((role) => <div className="record-row" key={role.id}><span className="record-avatar">R</span><span className="record-copy"><strong>{role.name}</strong><small>{role.code} · {role.permissions.length} permissions</small></span></div>)}</div><form className="compact-form role-form" onSubmit={createRole}><p className="eyebrow">Create role</p><div className="form-grid"><input placeholder="Role code" value={roleForm.code} onChange={(event) => setRoleForm({ ...roleForm, code: event.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, "-") })} required /><input placeholder="Role name" value={roleForm.name} onChange={(event) => setRoleForm({ ...roleForm, name: event.target.value })} required /></div><div className="permission-grid">{permissions.map((permission) => <label key={permission.code}><input type="checkbox" checked={roleForm.permissions.includes(permission.code)} onChange={(event) => setRoleForm({ ...roleForm, permissions: event.target.checked ? [...roleForm.permissions, permission.code] : roleForm.permissions.filter((code) => code !== permission.code) })} />{permission.code}</label>)}</div><button className="primary-button" type="submit">Create role</button></form><form className="compact-form role-form" onSubmit={assignRole}><p className="eyebrow">Assign role</p><div className="form-grid"><Dropdown value={assignment.user_id} options={[{ value: "", label: "Select person" }, ...users.map((user) => ({ value: user.id, label: user.display_name }))]} onChange={(value) => setAssignment({ ...assignment, user_id: value })} ariaLabel="Person" placeholder="Select person" /><Dropdown value={assignment.role_id} options={[{ value: "", label: "Select role" }, ...roles.map((role) => ({ value: role.id, label: role.name }))]} onChange={(value) => setAssignment({ ...assignment, role_id: value })} ariaLabel="Role" placeholder="Select role" /></div><button className="text-button" type="submit">Assign role <ArrowUpRight size={15} /></button></form></div>}

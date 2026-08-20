@@ -85,6 +85,7 @@ func main() {
 	mux.Handle("POST /api/v1/users", authHandler.RequirePermission("users.manage", usersHandler(pool, authHandler)))
 	mux.Handle("GET /api/v1/departments", authHandler.RequirePermission("organization.read", departmentsHandler(pool, authHandler)))
 	mux.Handle("POST /api/v1/departments", authHandler.RequirePermission("organization.manage", departmentsHandler(pool, authHandler)))
+	mux.Handle("GET /api/v1/user-departments", authHandler.RequirePermission("organization.read", listUserDepartmentsHandler(pool, authHandler)))
 	mux.Handle("POST /api/v1/user-departments", authHandler.RequirePermission("organization.manage", userDepartmentsHandler(pool, authHandler)))
 	mux.HandleFunc("GET /api/v1/setup/status", authHandler.SetupStatus)
 	mux.HandleFunc("POST /api/v1/setup", authHandler.Setup)
@@ -490,6 +491,46 @@ func departmentsHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.Handl
 		}
 		_ = workspace.SeedDepartmentPositions(r.Context(), pool, user.OrganizationID, created.ID)
 		writeJSON(w, http.StatusCreated, created)
+	}
+}
+
+func listUserDepartmentsHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, err := authHandler.Authenticate(r)
+		if err != nil || pool == nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+			return
+		}
+		rows, err := pool.Query(r.Context(), `
+			SELECT ud.user_id, u.display_name, ud.department_id, d.name, ud.is_primary, ud.is_head,
+			       COALESCE(p.code,''), COALESCE(p.name,'')
+			FROM user_departments ud
+			JOIN users u ON u.id=ud.user_id
+			JOIN departments d ON d.id=ud.department_id
+			LEFT JOIN department_positions p ON p.id=ud.position_id
+			WHERE u.organization_id=$1 AND d.organization_id=$1
+			ORDER BY d.name, u.display_name`, user.OrganizationID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load memberships"})
+			return
+		}
+		defer rows.Close()
+		items := make([]map[string]any, 0)
+		for rows.Next() {
+			var userID, userName, deptID, deptName, posCode, posName string
+			var primary, head bool
+			if rows.Scan(&userID, &userName, &deptID, &deptName, &primary, &head, &posCode, &posName) != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not read memberships"})
+				return
+			}
+			items = append(items, map[string]any{
+				"user_id": userID, "user_name": userName,
+				"department_id": deptID, "department_name": deptName,
+				"is_primary": primary, "is_head": head,
+				"position_code": posCode, "position_name": posName,
+			})
+		}
+		writeJSON(w, http.StatusOK, items)
 	}
 }
 

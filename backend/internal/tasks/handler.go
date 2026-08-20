@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"name/backend/internal/auth"
+	"name/backend/internal/workspace"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -66,18 +67,26 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "scope must be own, team, department, or organization"})
 		return
 	}
+	deptID := strings.TrimSpace(r.URL.Query().Get("department_id"))
+	if deptID != "" && !workspace.CanEnterDepartment(r.Context(), h.DB, h.Auth, user, deptID) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "you cannot view tasks for this department"})
+		return
+	}
 	filter := `t.organization_id = $1`
 	args := []any{user.OrganizationID}
-	if scope == "own" {
-		filter += ` AND (t.created_by = $2 OR t.assigned_to = $2)`
+	argN := 2
+	if deptID != "" {
+		// Exact workspace: people in this department only (overrides soft overlapping scope).
+		filter += ` AND ` + workspace.MemberExistsSQL("COALESCE(t.assigned_to,t.created_by)", argN)
+		args = append(args, deptID)
+	} else if scope == "own" {
+		filter += fmt.Sprintf(` AND (t.created_by = $%d OR t.assigned_to = $%d)`, argN, argN)
 		args = append(args, user.ID)
-	}
-	if scope == "team" {
-		filter += ` AND EXISTS (SELECT 1 FROM user_teams current_ut JOIN user_teams target_ut ON target_ut.team_id=current_ut.team_id WHERE current_ut.user_id=$2 AND target_ut.user_id=COALESCE(t.assigned_to,t.created_by))`
+	} else if scope == "team" {
+		filter += fmt.Sprintf(` AND EXISTS (SELECT 1 FROM user_teams current_ut JOIN user_teams target_ut ON target_ut.team_id=current_ut.team_id WHERE current_ut.user_id=$%d AND target_ut.user_id=COALESCE(t.assigned_to,t.created_by))`, argN)
 		args = append(args, user.ID)
-	}
-	if scope == "department" {
-		filter += ` AND EXISTS (SELECT 1 FROM user_departments current_ud JOIN user_departments target_ud ON target_ud.department_id=current_ud.department_id WHERE current_ud.user_id=$2 AND target_ud.user_id=COALESCE(t.assigned_to,t.created_by))`
+	} else if scope == "department" {
+		filter += fmt.Sprintf(` AND EXISTS (SELECT 1 FROM user_departments current_ud JOIN user_departments target_ud ON target_ud.department_id=current_ud.department_id WHERE current_ud.user_id=$%d AND target_ud.user_id=COALESCE(t.assigned_to,t.created_by))`, argN)
 		args = append(args, user.ID)
 	}
 	rows, err := h.DB.Query(r.Context(), `SELECT t.id, t.title, t.description, t.status, t.priority, t.due_at, t.assigned_to, u.display_name, t.recurrence_rule, t.recurrence_next_at, t.created_at, t.updated_at FROM tasks t LEFT JOIN users u ON u.id=t.assigned_to WHERE `+filter+` ORDER BY t.updated_at DESC LIMIT 500`, args...)

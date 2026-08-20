@@ -14,6 +14,7 @@ import (
 	"name/backend/internal/auth"
 	"name/backend/internal/httpapi"
 	"name/backend/internal/notify"
+	"name/backend/internal/workspace"
 )
 
 type Handler struct {
@@ -151,6 +152,11 @@ func (h Handler) ListOrganization(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return
 	}
+	deptID := strings.TrimSpace(r.URL.Query().Get("department_id"))
+	if deptID != "" && !workspace.CanEnterDepartment(r.Context(), h.DB, h.Auth, user, deptID) {
+		httpapi.WriteError(w, http.StatusForbidden, "forbidden", "you cannot view attendance for this department")
+		return
+	}
 	h.ensureSettings(r.Context(), user.OrganizationID)
 	expected := h.expectedCheckIn(r.Context(), user.OrganizationID)
 	query := `
@@ -163,6 +169,11 @@ func (h Handler) ListOrganization(w http.ResponseWriter, r *http.Request) {
 		WHERE a.organization_id=$1`
 	args := []any{user.OrganizationID}
 	argN := 2
+	if deptID != "" {
+		query += ` AND ` + workspace.MemberExistsSQL("a.user_id", argN)
+		args = append(args, deptID)
+		argN++
+	}
 	if date := strings.TrimSpace(r.URL.Query().Get("date")); date != "" {
 		query += fmt.Sprintf(` AND a.work_date=$%d`, argN)
 		args = append(args, date)
@@ -232,9 +243,14 @@ func (h Handler) Today(w http.ResponseWriter, r *http.Request) {
 	if date == "" {
 		date = time.Now().UTC().Format("2006-01-02")
 	}
+	deptID := strings.TrimSpace(r.URL.Query().Get("department_id"))
+	if deptID != "" && !workspace.CanEnterDepartment(r.Context(), h.DB, h.Auth, user, deptID) {
+		httpapi.WriteError(w, http.StatusForbidden, "forbidden", "you cannot view attendance for this department")
+		return
+	}
 	var summary TodaySummary
 	summary.WorkDate = date
-	_ = h.DB.QueryRow(r.Context(), `
+	query := `
 		SELECT
 			COUNT(*) FILTER (WHERE status='present'),
 			COUNT(*) FILTER (WHERE status='remote'),
@@ -243,10 +259,15 @@ func (h Handler) Today(w http.ResponseWriter, r *http.Request) {
 			COUNT(*) FILTER (WHERE check_in_at IS NOT NULL),
 			COUNT(*) FILTER (WHERE check_out_at IS NOT NULL),
 			COUNT(*) FILTER (WHERE check_in_at IS NOT NULL AND check_out_at IS NULL)
-		FROM attendance_records
-		WHERE organization_id=$1 AND work_date=$2::date`,
-		user.OrganizationID, date,
-	).Scan(&summary.PresentCount, &summary.RemoteCount, &summary.LeaveCount, &summary.AbsentCount,
+		FROM attendance_records a
+		WHERE a.organization_id=$1 AND a.work_date=$2::date`
+	args := []any{user.OrganizationID, date}
+	if deptID != "" {
+		query += ` AND ` + workspace.MemberExistsSQL("a.user_id", 3)
+		args = append(args, deptID)
+	}
+	_ = h.DB.QueryRow(r.Context(), query, args...).Scan(
+		&summary.PresentCount, &summary.RemoteCount, &summary.LeaveCount, &summary.AbsentCount,
 		&summary.CheckedIn, &summary.CheckedOut, &summary.StillWorking)
 	httpapi.WriteJSON(w, http.StatusOK, summary)
 }
@@ -317,13 +338,24 @@ func (h Handler) People(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return
 	}
-	rows, err := h.DB.Query(r.Context(), `
+	deptID := strings.TrimSpace(r.URL.Query().Get("department_id"))
+	if deptID != "" && !workspace.CanEnterDepartment(r.Context(), h.DB, h.Auth, user, deptID) {
+		httpapi.WriteError(w, http.StatusForbidden, "forbidden", "you cannot view people for this department")
+		return
+	}
+	query := `
 		SELECT u.id, u.display_name, u.email, COALESCE(jt.id::text,''), COALESCE(jt.name,''), COALESCE(ep.employee_code,'')
 		FROM users u
 		LEFT JOIN job_titles jt ON jt.id=u.job_title_id
 		LEFT JOIN employee_profiles ep ON ep.user_id=u.id AND ep.organization_id=u.organization_id
-		WHERE u.organization_id=$1 AND u.status='active'
-		ORDER BY u.display_name`, user.OrganizationID)
+		WHERE u.organization_id=$1 AND u.status='active'`
+	args := []any{user.OrganizationID}
+	if deptID != "" {
+		query += ` AND ` + workspace.MemberExistsSQL("u.id", 2)
+		args = append(args, deptID)
+	}
+	query += ` ORDER BY u.display_name`
+	rows, err := h.DB.Query(r.Context(), query, args...)
 	if err != nil {
 		httpapi.WriteError(w, http.StatusInternalServerError, "query_failed", "could not load people")
 		return

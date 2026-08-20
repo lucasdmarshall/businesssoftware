@@ -2,10 +2,13 @@ package audit
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"name/backend/internal/auth"
+	"name/backend/internal/workspace"
 )
 
 type Handler struct {
@@ -28,7 +31,25 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 		return
 	}
-	rows, err := h.DB.Query(r.Context(), `SELECT a.id,a.action,a.entity_type,a.entity_id,COALESCE(u.display_name,'System'),a.metadata,a.created_at::text FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id WHERE a.organization_id=$1 ORDER BY a.created_at DESC LIMIT 500`, user.OrganizationID)
+	deptID := strings.TrimSpace(r.URL.Query().Get("department_id"))
+	if deptID != "" && !workspace.CanEnterDepartment(r.Context(), h.DB, h.Auth, user, deptID) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "you cannot view activity for this department"})
+		return
+	}
+	query := `SELECT a.id,a.action,a.entity_type,a.entity_id,COALESCE(u.display_name,'System'),a.metadata,a.created_at::text
+		FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id
+		WHERE a.organization_id=$1`
+	args := []any{user.OrganizationID}
+	if deptID != "" {
+		query += fmt.Sprintf(` AND (
+			%s
+			OR COALESCE(a.metadata->>'department_id','')=$2
+			OR (a.entity_type='department' AND a.entity_id::text=$2)
+		)`, workspace.MemberExistsSQL("a.actor_id", 2))
+		args = append(args, deptID)
+	}
+	query += ` ORDER BY a.created_at DESC LIMIT 500`
+	rows, err := h.DB.Query(r.Context(), query, args...)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load audit logs"})
 		return
