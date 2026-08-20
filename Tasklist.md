@@ -179,8 +179,8 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Support amount-based approval rules
 - [x] Support rejection reasons
 - [x] Support resubmission
-- [ ] Support delegated approval
-- [ ] Add approval reminders and deadlines
+- [x] Support delegated approval
+- [x] Add approval reminders and deadlines
 - [x] Add complete workflow audit trail
 - [x] Add generic approval engine API (definitions, instances, approve/reject/resubmit/cancel)
 - [x] Add Approvals UI: reviewer inbox, request submission, workflow builder, and history

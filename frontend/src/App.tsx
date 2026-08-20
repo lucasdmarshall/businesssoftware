@@ -43,11 +43,11 @@ type LeavePolicy = { id: string; leave_type: string; entitled_days: number; allo
 type RoleRecord = { id: string; code: string; name: string; permissions: string[] };
 type PermissionRecord = { code: string; description: string };
 type AuditEntry = { id: string; action: string; entity_type: string; entity_id: string; actor_name: string; created_at: string };
-type WorkflowStepInput = { name: string; approver_role_code: string; required_approvals: number; min_amount: number | null; max_amount: number | null };
+type WorkflowStepInput = { name: string; approver_role_code: string; required_approvals: number; min_amount: number | null; max_amount: number | null; sla_hours: number | null };
 type WorkflowStep = WorkflowStepInput & { id: string; step_order: number; approver_user_id: string };
 type WorkflowDefinition = { id: string; code: string; name: string; entity_type: string; active: boolean; steps: WorkflowStep[] };
-type WorkflowActionEntry = { id: string; step_order: number | null; actor_name: string; action: string; reason: string; created_at: string };
-type WorkflowInstance = { id: string; definition_id: string; definition_name: string; title: string; entity_type: string; amount: number | null; status: string; current_step_order: number | null; current_step_name: string; submitted_by: string; submitter_name: string; created_at: string; updated_at: string; actions?: WorkflowActionEntry[] };
+type WorkflowActionEntry = { id: string; step_order: number | null; actor_name: string; on_behalf_of?: string; on_behalf_name?: string; action: string; reason: string; created_at: string };
+type WorkflowInstance = { id: string; definition_id: string; definition_name: string; title: string; entity_type: string; amount: number | null; status: string; current_step_order: number | null; current_step_name: string; due_at: string | null; submitted_by: string; submitter_name: string; created_at: string; updated_at: string; actions?: WorkflowActionEntry[] };
 
 type VendorItem = { id: string; name: string; contact_email: string; contact_phone: string; status: string };
 type ExpenseItem = { id: string; description: string; category: string; amount: number; currency: string; status: string; vendor_id: string; vendor_name: string; submitter_name: string; approval_status: string; created_at: string };
@@ -2731,28 +2731,48 @@ function WorkflowView() {
   const [mine, setMine] = useState<WorkflowInstance[]>([]);
   const [definitions, setDefinitions] = useState<WorkflowDefinition[]>([]);
   const [detail, setDetail] = useState<WorkflowInstance | null>(null);
+  const [users, setUsers] = useState<UserRecord[]>([]);
+  const [delegations, setDelegations] = useState<Array<{ id: string; delegator_id: string; delegator_name?: string; delegate_id: string; delegate_name?: string; starts_at: string; ends_at: string | null; reason: string; active: boolean }>>([]);
   const [reason, setReason] = useState("");
+  const [dueEdit, setDueEdit] = useState("");
   const [message, setMessage] = useState("");
   const [request, setRequest] = useState({ definition_id: "", title: "", amount: "" });
+  const [delegationForm, setDelegationForm] = useState({ delegate_id: "", ends_at: "", reason: "" });
   const [showBuilder, setShowBuilder] = useState(false);
-  const [builder, setBuilder] = useState<{ code: string; name: string; entity_type: string; steps: WorkflowStepInput[] }>({ code: "", name: "", entity_type: "generic", steps: [{ name: "", approver_role_code: "", required_approvals: 1, min_amount: null, max_amount: null }] });
+  const [builder, setBuilder] = useState<{ code: string; name: string; entity_type: string; steps: WorkflowStepInput[] }>({ code: "", name: "", entity_type: "generic", steps: [{ name: "", approver_role_code: "", required_approvals: 1, min_amount: null, max_amount: null, sla_hours: 24 }] });
+
+  const dueLabel = (dueAt: string | null | undefined) => {
+    if (!dueAt) return "";
+    const due = new Date(dueAt);
+    if (Number.isNaN(due.getTime())) return "";
+    const overdue = due.getTime() < Date.now();
+    return `${overdue ? "Overdue" : "Due"} ${due.toLocaleString()}`;
+  };
 
   const load = async () => {
-    const [inboxResponse, mineResponse, definitionsResponse] = await Promise.all([
+    const [inboxResponse, mineResponse, definitionsResponse, delegationsResponse, usersResponse] = await Promise.all([
       fetch(`${apiBase}/workflow/instances?inbox=1`, { credentials: "include" }),
       fetch(`${apiBase}/workflow/instances?mine=1`, { credentials: "include" }),
       fetch(`${apiBase}/workflow/definitions`, { credentials: "include" }),
+      fetch(`${apiBase}/workflow/delegations`, { credentials: "include" }),
+      fetch(`${apiBase}/users`, { credentials: "include" }),
     ]);
     if (inboxResponse.ok) setInbox(await inboxResponse.json());
     if (mineResponse.ok) setMine(await mineResponse.json());
     if (definitionsResponse.ok) setDefinitions(await definitionsResponse.json());
+    if (delegationsResponse.ok) setDelegations(await delegationsResponse.json());
+    if (usersResponse.ok) setUsers(await usersResponse.json());
   };
   useEffect(() => { void load(); }, []);
 
   const openDetail = async (id: string) => {
     setReason("");
     const response = await fetch(`${apiBase}/workflow/instances/${id}`, { credentials: "include" });
-    if (response.ok) setDetail(await response.json());
+    if (response.ok) {
+      const item = await response.json() as WorkflowInstance;
+      setDetail(item);
+      setDueEdit(item.due_at ? item.due_at.slice(0, 16) : "");
+    }
   };
 
   const act = async (id: string, action: "approve" | "reject" | "resubmit" | "cancel") => {
@@ -2763,6 +2783,16 @@ function WorkflowView() {
     setReason("");
     await load();
     await openDetail(id);
+  };
+
+  const saveDue = async (id: string) => {
+    const due_at = dueEdit.trim() ? new Date(dueEdit).toISOString() : null;
+    const response = await fetch(`${apiBase}/workflow/instances/${id}/due`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ due_at }),
+    });
+    setMessage(response.ok ? "Deadline updated" : ((await response.json().catch(() => null))?.error ?? "Could not set deadline"));
+    if (response.ok) { await load(); await openDetail(id); }
   };
 
   const submitRequest = async (event: FormEvent<HTMLFormElement>) => {
@@ -2779,18 +2809,33 @@ function WorkflowView() {
     const response = await fetch(`${apiBase}/workflow/definitions`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(builder) });
     const data = await response.json().catch(() => ({}));
     setMessage(response.ok ? "Workflow created" : (data.error ?? "Could not create workflow"));
-    if (response.ok) { setBuilder({ code: "", name: "", entity_type: "generic", steps: [{ name: "", approver_role_code: "", required_approvals: 1, min_amount: null, max_amount: null }] }); setShowBuilder(false); await load(); }
+    if (response.ok) { setBuilder({ code: "", name: "", entity_type: "generic", steps: [{ name: "", approver_role_code: "", required_approvals: 1, min_amount: null, max_amount: null, sla_hours: 24 }] }); setShowBuilder(false); await load(); }
+  };
+
+  const createDelegation = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const payload: Record<string, string> = { delegate_id: delegationForm.delegate_id, reason: delegationForm.reason };
+    if (delegationForm.ends_at) payload.ends_at = new Date(delegationForm.ends_at).toISOString();
+    const response = await fetch(`${apiBase}/workflow/delegations`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    setMessage(response.ok ? "Delegation created" : "Could not create delegation");
+    if (response.ok) { setDelegationForm({ delegate_id: "", ends_at: "", reason: "" }); await load(); }
+  };
+
+  const revokeDelegation = async (id: string) => {
+    const response = await fetch(`${apiBase}/workflow/delegations/${id}/revoke`, { method: "POST", credentials: "include" });
+    setMessage(response.ok ? "Delegation revoked" : "Could not revoke delegation");
+    if (response.ok) await load();
   };
 
   const updateStep = (index: number, patch: Partial<WorkflowStepInput>) => setBuilder((current) => ({ ...current, steps: current.steps.map((step, position) => position === index ? { ...step, ...patch } : step) }));
   const inboxHas = (id: string) => inbox.some((item) => item.id === id);
 
   return <section className="content-wrap">
-    <div className="page-heading"><div><p className="eyebrow">Governance</p><h1>Approvals & workflows.</h1><p className="lede">Route requests through reviewers. Approvals are always confirmed on the company server.</p></div><button className="primary-button" type="button" onClick={() => setShowBuilder((value) => !value)}>{showBuilder ? "Close builder" : "New workflow"}</button></div>
+    <div className="page-heading"><div><p className="eyebrow">Governance</p><h1>Approvals & workflows.</h1><p className="lede">Route requests through reviewers with deadlines, reminders, and delegated coverage when someone is away.</p></div><button className="primary-button" type="button" onClick={() => setShowBuilder((value) => !value)}>{showBuilder ? "Close builder" : "New workflow"}</button></div>
     {message && <p className="inline-message">{message}</p>}
 
     <div className="section-heading task-heading"><div><p className="eyebrow">Waiting on you</p><h2>{inbox.length} to review</h2></div></div>
-    <div className="record-list">{inbox.length === 0 ? <p className="lede" style={{ padding: "18px 0" }}>Nothing is waiting for your decision.</p> : inbox.map((item) => <button className="record-row workflow-row" key={item.id} type="button" onClick={() => void openDetail(item.id)}><span className="record-avatar"><ClipboardCheck size={15} /></span><span className="record-copy"><strong>{item.title}</strong><small>{item.definition_name} · step: {item.current_step_name || "—"}{item.amount != null ? ` · ${item.amount.toLocaleString()}` : ""} · from {item.submitter_name}</small></span><span className={`status-pill ${workflowStatusClass[item.status] ?? ""}`}>{item.status.replace("_", " ")}</span></button>)}</div>
+    <div className="record-list">{inbox.length === 0 ? <p className="lede" style={{ padding: "18px 0" }}>Nothing is waiting for your decision.</p> : inbox.map((item) => <button className="record-row workflow-row" key={item.id} type="button" onClick={() => void openDetail(item.id)}><span className="record-avatar"><ClipboardCheck size={15} /></span><span className="record-copy"><strong>{item.title}</strong><small>{item.definition_name} · step: {item.current_step_name || "—"}{item.amount != null ? ` · ${item.amount.toLocaleString()}` : ""}{item.due_at ? ` · ${dueLabel(item.due_at)}` : ""} · from {item.submitter_name}</small></span><span className={`status-pill ${workflowStatusClass[item.status] ?? ""}`}>{item.status.replace("_", " ")}</span></button>)}</div>
 
     <form className="task-composer workflow-composer" onSubmit={submitRequest}>
       <Dropdown value={request.definition_id} options={[{ value: "", label: "Select workflow…" }, ...definitions.map((definition) => ({ value: definition.id, label: definition.name }))]} onChange={(value) => setRequest({ ...request, definition_id: value })} ariaLabel="Workflow" placeholder="Select workflow…" />
@@ -2800,12 +2845,27 @@ function WorkflowView() {
     </form>
 
     <div className="section-heading task-heading"><div><p className="eyebrow">Your requests</p><h2>{mine.length} submitted</h2></div></div>
-    <div className="record-list">{mine.map((item) => <button className="record-row workflow-row" key={item.id} type="button" onClick={() => void openDetail(item.id)}><span className="record-avatar department-avatar"><ClipboardCheck size={15} /></span><span className="record-copy"><strong>{item.title}</strong><small>{item.definition_name}{item.current_step_name ? ` · at: ${item.current_step_name}` : ""} · updated {new Date(item.updated_at).toLocaleDateString()}</small></span><span className={`status-pill ${workflowStatusClass[item.status] ?? ""}`}>{item.status.replace("_", " ")}</span></button>)}</div>
+    <div className="record-list">{mine.map((item) => <button className="record-row workflow-row" key={item.id} type="button" onClick={() => void openDetail(item.id)}><span className="record-avatar department-avatar"><ClipboardCheck size={15} /></span><span className="record-copy"><strong>{item.title}</strong><small>{item.definition_name}{item.current_step_name ? ` · at: ${item.current_step_name}` : ""}{item.due_at ? ` · ${dueLabel(item.due_at)}` : ""} · updated {new Date(item.updated_at).toLocaleDateString()}</small></span><span className={`status-pill ${workflowStatusClass[item.status] ?? ""}`}>{item.status.replace("_", " ")}</span></button>)}</div>
+
+    <div className="section-heading task-heading"><div><p className="eyebrow">Coverage</p><h2>Delegated approval</h2></div></div>
+    <form className="compact-form" onSubmit={(event) => void createDelegation(event)}>
+      <div className="form-grid">
+        <Dropdown value={delegationForm.delegate_id} options={[{ value: "", label: "Delegate to…" }, ...users.filter((u) => u.status !== "offboarded").map((user) => ({ value: user.id, label: user.display_name }))]} onChange={(value) => setDelegationForm({ ...delegationForm, delegate_id: value })} ariaLabel="Delegate" placeholder="Delegate to…" />
+        <input type="datetime-local" value={delegationForm.ends_at} onChange={(event) => setDelegationForm({ ...delegationForm, ends_at: event.target.value })} aria-label="Ends at" />
+        <input placeholder="Reason (optional)" value={delegationForm.reason} onChange={(event) => setDelegationForm({ ...delegationForm, reason: event.target.value })} />
+      </div>
+      <button className="primary-button" type="submit">Create delegation</button>
+    </form>
+    <div className="record-list">{delegations.filter((item) => item.active).map((item) => <div className="record-row" key={item.id}><span className="record-avatar"><UsersRound size={15} /></span><span className="record-copy"><strong>{item.delegator_name} → {item.delegate_name}</strong><small>{item.ends_at ? `Until ${new Date(item.ends_at).toLocaleString()}` : "Open-ended"}{item.reason ? ` · ${item.reason}` : ""}</small></span>{item.delegator_id && <button className="text-button muted" type="button" onClick={() => void revokeDelegation(item.id)}>Revoke</button>}</div>)}</div>
 
     {detail && <div className="rbac-panel">
       <div className="section-heading"><div><p className="eyebrow">{detail.definition_name}</p><h2>{detail.title}</h2></div><button className="text-button muted" type="button" onClick={() => setDetail(null)}>Close</button></div>
-      <p className="lede" style={{ marginBottom: 18 }}>Status: <span className={`status-pill ${workflowStatusClass[detail.status] ?? ""}`}>{detail.status.replace("_", " ")}</span>{detail.current_step_name ? ` · current step: ${detail.current_step_name}` : ""}{detail.amount != null ? ` · amount ${detail.amount.toLocaleString()}` : ""}</p>
-      <div className="comment-thread">{(detail.actions ?? []).map((action) => <p key={action.id}><strong>{action.actor_name}</strong> {action.action}{action.step_order ? ` · step ${action.step_order}` : ""}{action.reason ? ` — “${action.reason}”` : ""} <small style={{ color: "var(--faint)" }}>· {new Date(action.created_at).toLocaleString()}</small></p>)}</div>
+      <p className="lede" style={{ marginBottom: 18 }}>Status: <span className={`status-pill ${workflowStatusClass[detail.status] ?? ""}`}>{detail.status.replace("_", " ")}</span>{detail.current_step_name ? ` · current step: ${detail.current_step_name}` : ""}{detail.due_at ? ` · ${dueLabel(detail.due_at)}` : ""}{detail.amount != null ? ` · amount ${detail.amount.toLocaleString()}` : ""}</p>
+      {detail.status === "in_review" && <div className="form-grid" style={{ marginBottom: 16 }}>
+        <input type="datetime-local" value={dueEdit} onChange={(event) => setDueEdit(event.target.value)} aria-label="Deadline" />
+        <button className="text-button" type="button" onClick={() => void saveDue(detail.id)}>Set deadline</button>
+      </div>}
+      <div className="comment-thread">{(detail.actions ?? []).map((action) => <p key={action.id}><strong>{action.actor_name}</strong>{action.on_behalf_name ? ` (for ${action.on_behalf_name})` : ""} {action.action}{action.step_order ? ` · step ${action.step_order}` : ""}{action.reason ? ` — “${action.reason}”` : ""} <small style={{ color: "var(--faint)" }}>· {new Date(action.created_at).toLocaleString()}</small></p>)}</div>
       {(inboxHas(detail.id) || (detail.status === "rejected" && detail.submitter_name)) && <div className="workflow-actions">
         <input placeholder="Reason (required to reject)" value={reason} onChange={(event) => setReason(event.target.value)} />
         {inboxHas(detail.id) && <><button className="primary-button" type="button" onClick={() => void act(detail.id, "approve")}>Approve</button><button className="text-button" type="button" onClick={() => void act(detail.id, "reject")}>Reject</button></>}
@@ -2824,9 +2884,10 @@ function WorkflowView() {
         <input placeholder="# approvals" inputMode="numeric" value={String(step.required_approvals)} onChange={(event) => updateStep(index, { required_approvals: Math.max(1, Number(event.target.value.replace(/[^0-9]/g, "")) || 1) })} />
         <input placeholder="Min amount" inputMode="decimal" value={step.min_amount ?? ""} onChange={(event) => updateStep(index, { min_amount: event.target.value.trim() === "" ? null : Number(event.target.value.replace(/[^0-9.]/g, "")) })} />
         <input placeholder="Max amount" inputMode="decimal" value={step.max_amount ?? ""} onChange={(event) => updateStep(index, { max_amount: event.target.value.trim() === "" ? null : Number(event.target.value.replace(/[^0-9.]/g, "")) })} />
+        <input placeholder="SLA hours" inputMode="numeric" value={step.sla_hours ?? ""} onChange={(event) => updateStep(index, { sla_hours: event.target.value.trim() === "" ? null : Math.max(1, Number(event.target.value.replace(/[^0-9]/g, "")) || 1) })} />
         {builder.steps.length > 1 && <button className="text-button muted" type="button" onClick={() => setBuilder((current) => ({ ...current, steps: current.steps.filter((_, position) => position !== index) }))}>Remove</button>}
       </div>)}
-      <button className="text-button" type="button" onClick={() => setBuilder((current) => ({ ...current, steps: [...current.steps, { name: "", approver_role_code: "", required_approvals: 1, min_amount: null, max_amount: null }] }))}>Add step <ArrowUpRight size={15} /></button>
+      <button className="text-button" type="button" onClick={() => setBuilder((current) => ({ ...current, steps: [...current.steps, { name: "", approver_role_code: "", required_approvals: 1, min_amount: null, max_amount: null, sla_hours: 24 }] }))}>Add step <ArrowUpRight size={15} /></button>
       <button className="primary-button" type="submit">Create workflow</button>
     </form>}
   </section>;

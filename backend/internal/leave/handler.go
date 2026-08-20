@@ -210,6 +210,17 @@ func (h Handler) Decide(w http.ResponseWriter, r *http.Request) {
 		status = "rejected"
 	}
 
+	var workflowStatus string
+	_ = h.DB.QueryRow(r.Context(), `
+		SELECT COALESCE(i.status,'')
+		FROM leave_requests l
+		LEFT JOIN workflow_instances i ON i.id=l.workflow_instance_id
+		WHERE l.id=$1 AND l.organization_id=$2`, input.ID, user.OrganizationID).Scan(&workflowStatus)
+	if workflowStatus == "in_review" {
+		httpapi.WriteError(w, http.StatusConflict, "in_workflow", "this leave request is in a workflow; decide it from Approvals")
+		return
+	}
+
 	tx, err := h.DB.Begin(r.Context())
 	if err != nil {
 		httpapi.WriteError(w, http.StatusInternalServerError, "tx_failed", "could not start leave decision")

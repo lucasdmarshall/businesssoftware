@@ -276,6 +276,11 @@ func main() {
 	mux.Handle("POST /api/v1/workflow/instances/{id}/reject", authHandler.RequirePermission("workflow.act", http.HandlerFunc(workflowHandler.Reject)))
 	mux.Handle("POST /api/v1/workflow/instances/{id}/resubmit", authHandler.RequirePermission("workflow.manage", http.HandlerFunc(workflowHandler.Resubmit)))
 	mux.Handle("POST /api/v1/workflow/instances/{id}/cancel", authHandler.RequirePermission("workflow.manage", http.HandlerFunc(workflowHandler.Cancel)))
+	mux.Handle("POST /api/v1/workflow/instances/{id}/due", authHandler.RequirePermission("workflow.read", http.HandlerFunc(workflowHandler.SetDue)))
+	mux.Handle("GET /api/v1/workflow/delegations", authHandler.RequirePermission("workflow.act", http.HandlerFunc(workflowHandler.Delegations)))
+	mux.Handle("POST /api/v1/workflow/delegations", authHandler.RequirePermission("workflow.act", http.HandlerFunc(workflowHandler.Delegations)))
+	mux.Handle("POST /api/v1/workflow/delegations/{id}/revoke", authHandler.RequirePermission("workflow.act", http.HandlerFunc(workflowHandler.RevokeDelegation)))
+	go workflowHandler.StartReminderWorker(context.Background())
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,

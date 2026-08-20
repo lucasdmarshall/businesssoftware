@@ -176,12 +176,12 @@ Completed in this milestone:
 - **Schedule chosen as third production-depth module:** week view, assign people, overlap + approved-leave conflicts, confirm/complete/cancel, duration + week hours rollup (migration `033_schedule_production.sql`)
 - **Finance suite foundation:** chart of accounts, journals, tax codes, customers, AP bills, payments, suite UI tabs — see `docs/FINANCE_SUITE.md` (migration `034_finance_suite.sql`)
 - **Department data isolation:** Leave / Attendance / Tasks / Activity / Calendar / Schedule accept `department_id` and filter to `user_departments` members; People UI assigns membership + head via `/user-departments`
+- **Workflow production depth:** step SLA → instance `due_at`, upcoming/overdue reminder worker, time-boxed delegated approval coverage, set-deadline control — migration `035_workflow_delegation_reminders.sql`
 
 Next actions:
 
-1. Workflow production depth (delegation, deadlines, reminders).
-2. Finance depth (aging reports, bank recon) and Phase 9 packaging.
-3. Sales/CRM and IT/Ops remain scaffold-level until scheduled for depth.
+1. Finance depth (aging reports, bank recon) and Phase 9 packaging.
+2. Sales/CRM and IT/Ops remain scaffold-level until scheduled for depth.
 
 ## Active Work
 
