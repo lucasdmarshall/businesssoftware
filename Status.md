@@ -160,17 +160,18 @@ Completed in this milestone:
 - Phase 6 offline capability advanced: deletion tombstones with change-feed propagation (task delete drops the local copy on pull), a sync conflict history with entity-specific keep-mine/keep-server resolution, an offline conflict review panel in Work, and documented offline + server-authoritative rules (migration `019_tombstones_and_conflicts.sql`, `docs/OFFLINE_RULES.md`)
 - Phase 7 first business module (Finance): vendors and expenses (migration `020_finance.sql`). Expense submit routes approval through the generic workflow engine via a new reusable `workflow.Start`/`FindDefinitionByEntity`; approval state is read live from the linked instance, and finance managers mark approved expenses paid. A Finance view adds vendor and expense management end to end
 - Finance proves the platform integration: RBAC (`finance.*`), the workflow engine for approvals, audit logging, and the shared `httpapi` conventions all compose in one module
+- Phase 5 workflow engine completed: delegated approval (`workflow_delegations`), step SLA hours → instance `due_at`, reminder worker with upcoming/overdue notifications, and Approvals UI for coverage + deadlines (migration `022_workflow_delegation_reminders.sql`)
+- Leave requests now route through the generic workflow engine when a `leave` definition exists; final approve/reject syncs the leave record, and module-local decide is blocked while the workflow is `in_review`
 
 Next actions:
 
-1. Add team scope, scope-aware dashboards, and department data policies.
-2. Add shifts, leave balance, correction history, and payroll rules.
-3. Add conflict history and entity-specific merge resolution.
-4. Add export audit hooks when reporting/export services are introduced.
-5. Wire existing modules (leave, future finance) through the generic workflow engine instead of module-local approve/reject.
-6. Add workflow approval reminders/deadlines and delegated approval.
-7. Add delete tombstones so device-offline clients also receive deletions through the pull feed (pull now applies creates/updates only).
-8. Add a cross-device attendance merge keyed on work date (pull currently upserts attendance by record id).
+1. Merge or rebase Phase 4 attendance depth (leave balances, correction history, payroll rules) if not already on main.
+2. Add department data policies beyond the existing own/team/department/organization scopes.
+3. Add export audit hooks when reporting/export services are introduced.
+4. Continue Phase 7 HR depth: employee profiles, onboarding, offboarding, HR documents.
+5. Continue Phase 7 Finance depth: invoices, budgets, purchase requests.
+6. Finish automated device-offline harness testing.
+7. Unblock macOS `.dmg` packaging.
 
 ## Active Work
 

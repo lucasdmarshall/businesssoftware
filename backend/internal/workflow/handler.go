@@ -28,6 +28,7 @@ type Step struct {
 	RequiredApprovals int      `json:"required_approvals"`
 	MinAmount         *float64 `json:"min_amount"`
 	MaxAmount         *float64 `json:"max_amount"`
+	SlaHours          *int     `json:"sla_hours"`
 }
 
 type Definition struct {
@@ -40,12 +41,14 @@ type Definition struct {
 }
 
 type Action struct {
-	ID        string `json:"id"`
-	StepOrder *int   `json:"step_order"`
-	ActorName string `json:"actor_name"`
-	Action    string `json:"action"`
-	Reason    string `json:"reason"`
-	CreatedAt string `json:"created_at"`
+	ID           string `json:"id"`
+	StepOrder    *int   `json:"step_order"`
+	ActorName    string `json:"actor_name"`
+	OnBehalfOf   string `json:"on_behalf_of,omitempty"`
+	OnBehalfName string `json:"on_behalf_name,omitempty"`
+	Action       string `json:"action"`
+	Reason       string `json:"reason"`
+	CreatedAt    string `json:"created_at"`
 }
 
 type Instance struct {
@@ -58,6 +61,7 @@ type Instance struct {
 	Status           string   `json:"status"`
 	CurrentStepOrder *int     `json:"current_step_order"`
 	CurrentStepName  string   `json:"current_step_name"`
+	DueAt            *string  `json:"due_at"`
 	SubmittedBy      string   `json:"submitted_by"`
 	SubmitterName    string   `json:"submitter_name"`
 	CreatedAt        string   `json:"created_at"`
@@ -134,7 +138,7 @@ func (h Handler) Definitions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, definitions)
 		return
 	}
-	stepRows, err := h.DB.Query(r.Context(), `SELECT s.id, s.definition_id, s.step_order, s.name, COALESCE(s.approver_role_code,''), COALESCE(s.approver_user_id::text,''), s.required_approvals, s.min_amount, s.max_amount FROM workflow_steps s JOIN workflow_definitions d ON d.id=s.definition_id WHERE d.organization_id=$1 ORDER BY s.step_order`, user.OrganizationID)
+	stepRows, err := h.DB.Query(r.Context(), `SELECT s.id, s.definition_id, s.step_order, s.name, COALESCE(s.approver_role_code,''), COALESCE(s.approver_user_id::text,''), s.required_approvals, s.min_amount, s.max_amount, s.sla_hours FROM workflow_steps s JOIN workflow_definitions d ON d.id=s.definition_id WHERE d.organization_id=$1 ORDER BY s.step_order`, user.OrganizationID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load workflow steps"})
 		return
@@ -143,7 +147,7 @@ func (h Handler) Definitions(w http.ResponseWriter, r *http.Request) {
 	for stepRows.Next() {
 		var definitionID string
 		var s Step
-		if err := stepRows.Scan(&s.ID, &definitionID, &s.StepOrder, &s.Name, &s.ApproverRoleCode, &s.ApproverUserID, &s.RequiredApprovals, &s.MinAmount, &s.MaxAmount); err != nil {
+		if err := stepRows.Scan(&s.ID, &definitionID, &s.StepOrder, &s.Name, &s.ApproverRoleCode, &s.ApproverUserID, &s.RequiredApprovals, &s.MinAmount, &s.MaxAmount, &s.SlaHours); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not read workflow steps"})
 			return
 		}
@@ -165,6 +169,7 @@ type createDefinitionRequest struct {
 		RequiredApprovals int      `json:"required_approvals"`
 		MinAmount         *float64 `json:"min_amount"`
 		MaxAmount         *float64 `json:"max_amount"`
+		SlaHours          *int     `json:"sla_hours"`
 	} `json:"steps"`
 }
 
@@ -210,7 +215,7 @@ func (h Handler) CreateDefinition(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(step.ApproverUserID) != "" {
 			userID = strings.TrimSpace(step.ApproverUserID)
 		}
-		if _, err := tx.Exec(r.Context(), `INSERT INTO workflow_steps (definition_id, step_order, name, approver_role_code, approver_user_id, required_approvals, min_amount, max_amount) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, definitionID, order+1, strings.TrimSpace(step.Name), roleCode, userID, required, step.MinAmount, step.MaxAmount); err != nil {
+		if _, err := tx.Exec(r.Context(), `INSERT INTO workflow_steps (definition_id, step_order, name, approver_role_code, approver_user_id, required_approvals, min_amount, max_amount, sla_hours) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, definitionID, order+1, strings.TrimSpace(step.Name), roleCode, userID, required, step.MinAmount, step.MaxAmount, step.SlaHours); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not save workflow step"})
 			return
 		}
@@ -295,7 +300,7 @@ func statusAfterSubmit(submitted bool) string {
 
 // advance routes an instance to the first step after afterOrder whose amount
 // band includes amount. When no further step applies the instance is approved.
-// It records the given action on the transition.
+// It records the given action on the transition and applies the next step SLA.
 func advance(ctx context.Context, tx pgx.Tx, instanceID, definitionID string, amount *float64, afterOrder int, actorID, action, reason string) error {
 	value := 0.0
 	if amount != nil {
@@ -303,23 +308,30 @@ func advance(ctx context.Context, tx pgx.Tx, instanceID, definitionID string, am
 	}
 	var nextOrder int
 	var nextName string
+	var slaHours *int
 	err := tx.QueryRow(ctx, `
-		SELECT step_order, name FROM workflow_steps
+		SELECT step_order, name, sla_hours FROM workflow_steps
 		WHERE definition_id=$1 AND step_order>$2
 		  AND (min_amount IS NULL OR $3 >= min_amount)
 		  AND (max_amount IS NULL OR $3 <= max_amount)
-		ORDER BY step_order ASC LIMIT 1`, definitionID, afterOrder, value).Scan(&nextOrder, &nextName)
+		ORDER BY step_order ASC LIMIT 1`, definitionID, afterOrder, value).Scan(&nextOrder, &nextName, &slaHours)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, err := tx.Exec(ctx, `UPDATE workflow_instances SET status='approved', current_step_order=NULL, updated_at=NOW() WHERE id=$1`, instanceID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE workflow_instances SET status='approved', current_step_order=NULL, due_at=NULL, last_reminded_at=NULL, updated_at=NOW() WHERE id=$1`, instanceID); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `INSERT INTO workflow_actions (instance_id, step_order, actor_id, action, reason) VALUES ($1,$2,$3,$4,$5)`, instanceID, afterOrder, actorID, action, reason)
-		return err
+		if _, err := tx.Exec(ctx, `INSERT INTO workflow_actions (instance_id, step_order, actor_id, action, reason) VALUES ($1,$2,$3,$4,$5)`, instanceID, afterOrder, actorID, action, reason); err != nil {
+			return err
+		}
+		return syncLinkedEntity(ctx, tx, instanceID, "approved", actorID)
 	}
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE workflow_instances SET status='in_review', current_step_order=$2, updated_at=NOW() WHERE id=$1`, instanceID, nextOrder); err != nil {
+	if _, err := tx.Exec(ctx, `
+		UPDATE workflow_instances SET status='in_review', current_step_order=$2,
+			due_at = CASE WHEN $3::int IS NULL THEN NULL ELSE NOW() + make_interval(hours => $3) END,
+			last_reminded_at=NULL, updated_at=NOW()
+		WHERE id=$1`, instanceID, nextOrder, slaHours); err != nil {
 		return err
 	}
 	_, err = tx.Exec(ctx, `INSERT INTO workflow_actions (instance_id, step_order, actor_id, action, reason) VALUES ($1,$2,$3,$4,$5)`, instanceID, afterOrder, actorID, action, reason)
@@ -389,19 +401,28 @@ func (h Handler) decide(w http.ResponseWriter, r *http.Request, decision string)
 	}
 
 	if decision == "reject" {
-		if _, err := tx.Exec(r.Context(), `UPDATE workflow_instances SET status='rejected', current_step_order=NULL, updated_at=NOW() WHERE id=$1`, instanceID); err != nil {
+		onBehalf := resolveOnBehalfOf(r.Context(), tx, user.OrganizationID, definitionID, *currentStep, user.ID)
+		var onBehalfArg any
+		if onBehalf != "" {
+			onBehalfArg = onBehalf
+		}
+		if _, err := tx.Exec(r.Context(), `UPDATE workflow_instances SET status='rejected', current_step_order=NULL, due_at=NULL, last_reminded_at=NULL, updated_at=NOW() WHERE id=$1`, instanceID); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not reject request"})
 			return
 		}
-		if _, err := tx.Exec(r.Context(), `INSERT INTO workflow_actions (instance_id, step_order, actor_id, action, reason) VALUES ($1,$2,$3,'reject',$4)`, instanceID, *currentStep, user.ID, strings.TrimSpace(input.Reason)); err != nil {
+		if _, err := tx.Exec(r.Context(), `INSERT INTO workflow_actions (instance_id, step_order, actor_id, action, reason, on_behalf_of) VALUES ($1,$2,$3,'reject',$4,$5)`, instanceID, *currentStep, user.ID, strings.TrimSpace(input.Reason), onBehalfArg); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not record rejection"})
+			return
+		}
+		if err := syncLinkedEntity(r.Context(), tx, instanceID, "rejected", user.ID); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not sync linked record"})
 			return
 		}
 		if err := tx.Commit(r.Context()); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not save decision"})
 			return
 		}
-		h.audit(r.Context(), user, "workflow.rejected", "workflow_instance", instanceID, map[string]any{"step": *currentStep})
+		h.audit(r.Context(), user, "workflow.rejected", "workflow_instance", instanceID, map[string]any{"step": *currentStep, "on_behalf_of": onBehalf})
 		_ = notify.EmitUnlessActor(r.Context(), h.DB, user.OrganizationID, user.ID, submittedBy, "workflow.rejected", "Request rejected", title, "workflow_instance", instanceID)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "rejected"})
 		return
@@ -417,7 +438,12 @@ func (h Handler) decide(w http.ResponseWriter, r *http.Request, decision string)
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "you have already approved this step"})
 		return
 	}
-	if _, err := tx.Exec(r.Context(), `INSERT INTO workflow_actions (instance_id, step_order, actor_id, action, reason) VALUES ($1,$2,$3,'approve',$4)`, instanceID, *currentStep, user.ID, strings.TrimSpace(input.Reason)); err != nil {
+	onBehalf := resolveOnBehalfOf(r.Context(), tx, user.OrganizationID, definitionID, *currentStep, user.ID)
+	var onBehalfArg any
+	if onBehalf != "" {
+		onBehalfArg = onBehalf
+	}
+	if _, err := tx.Exec(r.Context(), `INSERT INTO workflow_actions (instance_id, step_order, actor_id, action, reason, on_behalf_of) VALUES ($1,$2,$3,'approve',$4,$5)`, instanceID, *currentStep, user.ID, strings.TrimSpace(input.Reason), onBehalfArg); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not record approval"})
 		return
 	}
@@ -441,32 +467,11 @@ func (h Handler) decide(w http.ResponseWriter, r *http.Request, decision string)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not save decision"})
 		return
 	}
-	h.audit(r.Context(), user, "workflow.approved", "workflow_instance", instanceID, map[string]any{"step": *currentStep, "outcome": outcome})
+	h.audit(r.Context(), user, "workflow.approved", "workflow_instance", instanceID, map[string]any{"step": *currentStep, "outcome": outcome, "on_behalf_of": onBehalf})
 	if outcome == "approved" {
 		_ = notify.EmitUnlessActor(r.Context(), h.DB, user.OrganizationID, user.ID, submittedBy, "workflow.approved", "Request approved", title, "workflow_instance", instanceID)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": outcome})
-}
-
-// stepAuthority returns the step's required approval count and whether the user
-// may act on it. A step with no named role or user is open to any authorized
-// approver (a plain supervisor gate).
-func stepAuthority(ctx context.Context, tx pgx.Tx, definitionID string, stepOrder int, user auth.SessionUser) (int, bool, error) {
-	var required int
-	var canAct bool
-	err := tx.QueryRow(ctx, `
-		SELECT s.required_approvals,
-		       (s.approver_user_id = $3
-		        OR (s.approver_role_code IS NULL AND s.approver_user_id IS NULL)
-		        OR EXISTS (
-		            SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id=ur.role_id
-		            WHERE ur.user_id=$3 AND ro.organization_id=$4 AND ro.code=s.approver_role_code))
-		FROM workflow_steps s
-		WHERE s.definition_id=$1 AND s.step_order=$2`, definitionID, stepOrder, user.ID, user.OrganizationID).Scan(&required, &canAct)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, false, errStepNotActionable
-	}
-	return required, canAct, err
 }
 
 type resubmitRequest struct {
@@ -526,7 +531,7 @@ func (h Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	instanceID := r.PathValue("id")
-	result, err := h.DB.Exec(r.Context(), `UPDATE workflow_instances SET status='cancelled', current_step_order=NULL, updated_at=NOW() WHERE id=$1 AND organization_id=$2 AND submitted_by=$3 AND status IN ('draft','in_review')`, instanceID, user.OrganizationID, user.ID)
+	result, err := h.DB.Exec(r.Context(), `UPDATE workflow_instances SET status='cancelled', current_step_order=NULL, due_at=NULL, last_reminded_at=NULL, updated_at=NOW() WHERE id=$1 AND organization_id=$2 AND submitted_by=$3 AND status IN ('draft','in_review')`, instanceID, user.OrganizationID, user.ID)
 	if err != nil || result.RowsAffected() == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "request could not be cancelled"})
 		return
@@ -550,22 +555,14 @@ func (h Handler) Instances(w http.ResponseWriter, r *http.Request) {
 		filters += ` AND i.submitted_by=$2`
 		args = append(args, user.ID)
 	} else if r.URL.Query().Get("inbox") == "1" {
-		// Items in review whose current step the caller may act on and has not
-		// already approved.
-		filters += ` AND i.status='in_review' AND EXISTS (
-			SELECT 1 FROM workflow_steps s
-			WHERE s.definition_id=i.definition_id AND s.step_order=i.current_step_order
-			  AND (s.approver_user_id=$2
-			       OR (s.approver_role_code IS NULL AND s.approver_user_id IS NULL)
-			       OR EXISTS (SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id=ur.role_id WHERE ur.user_id=$2 AND ro.organization_id=$1 AND ro.code=s.approver_role_code))
-		) AND NOT EXISTS (
-			SELECT 1 FROM workflow_actions a
-			WHERE a.instance_id=i.id AND a.step_order=i.current_step_order AND a.actor_id=$2 AND a.action='approve')`
+		// Items in review whose current step the caller may act on (directly or
+		// via delegation) and has not already approved.
+		filters += inboxAuthoritySQL()
 		args = append(args, user.ID)
 	}
 	query := `
 		SELECT i.id, i.definition_id, d.name, i.title, i.entity_type, i.amount, i.status, i.current_step_order,
-		       COALESCE(cs.name,''), i.submitted_by, u.display_name, i.created_at::text, i.updated_at::text
+		       COALESCE(cs.name,''), i.due_at::text, i.submitted_by, u.display_name, i.created_at::text, i.updated_at::text
 		FROM workflow_instances i
 		JOIN workflow_definitions d ON d.id=i.definition_id
 		JOIN users u ON u.id=i.submitted_by
@@ -580,7 +577,7 @@ func (h Handler) Instances(w http.ResponseWriter, r *http.Request) {
 	items := make([]Instance, 0)
 	for rows.Next() {
 		var item Instance
-		if err := rows.Scan(&item.ID, &item.DefinitionID, &item.DefinitionName, &item.Title, &item.EntityType, &item.Amount, &item.Status, &item.CurrentStepOrder, &item.CurrentStepName, &item.SubmittedBy, &item.SubmitterName, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.DefinitionID, &item.DefinitionName, &item.Title, &item.EntityType, &item.Amount, &item.Status, &item.CurrentStepOrder, &item.CurrentStepName, &item.DueAt, &item.SubmittedBy, &item.SubmitterName, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not read requests"})
 			return
 		}
@@ -600,17 +597,17 @@ func (h Handler) Instance(w http.ResponseWriter, r *http.Request) {
 	var item Instance
 	err = h.DB.QueryRow(r.Context(), `
 		SELECT i.id, i.definition_id, d.name, i.title, i.entity_type, i.amount, i.status, i.current_step_order,
-		       COALESCE(cs.name,''), i.submitted_by, u.display_name, i.created_at::text, i.updated_at::text
+		       COALESCE(cs.name,''), i.due_at::text, i.submitted_by, u.display_name, i.created_at::text, i.updated_at::text
 		FROM workflow_instances i
 		JOIN workflow_definitions d ON d.id=i.definition_id
 		JOIN users u ON u.id=i.submitted_by
 		LEFT JOIN workflow_steps cs ON cs.definition_id=i.definition_id AND cs.step_order=i.current_step_order
-		WHERE i.id=$1 AND i.organization_id=$2`, instanceID, user.OrganizationID).Scan(&item.ID, &item.DefinitionID, &item.DefinitionName, &item.Title, &item.EntityType, &item.Amount, &item.Status, &item.CurrentStepOrder, &item.CurrentStepName, &item.SubmittedBy, &item.SubmitterName, &item.CreatedAt, &item.UpdatedAt)
+		WHERE i.id=$1 AND i.organization_id=$2`, instanceID, user.OrganizationID).Scan(&item.ID, &item.DefinitionID, &item.DefinitionName, &item.Title, &item.EntityType, &item.Amount, &item.Status, &item.CurrentStepOrder, &item.CurrentStepName, &item.DueAt, &item.SubmittedBy, &item.SubmitterName, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "request not found"})
 		return
 	}
-	rows, err := h.DB.Query(r.Context(), `SELECT a.id, a.step_order, COALESCE(u.display_name,'System'), a.action, a.reason, a.created_at::text FROM workflow_actions a LEFT JOIN users u ON u.id=a.actor_id WHERE a.instance_id=$1 ORDER BY a.created_at ASC`, instanceID)
+	rows, err := h.DB.Query(r.Context(), `SELECT a.id, a.step_order, COALESCE(u.display_name,'System'), COALESCE(a.on_behalf_of::text,''), COALESCE(ob.display_name,''), a.action, a.reason, a.created_at::text FROM workflow_actions a LEFT JOIN users u ON u.id=a.actor_id LEFT JOIN users ob ON ob.id=a.on_behalf_of WHERE a.instance_id=$1 ORDER BY a.created_at ASC`, instanceID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load history"})
 		return
@@ -619,7 +616,7 @@ func (h Handler) Instance(w http.ResponseWriter, r *http.Request) {
 	item.Actions = make([]Action, 0)
 	for rows.Next() {
 		var a Action
-		if err := rows.Scan(&a.ID, &a.StepOrder, &a.ActorName, &a.Action, &a.Reason, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.StepOrder, &a.ActorName, &a.OnBehalfOf, &a.OnBehalfName, &a.Action, &a.Reason, &a.CreatedAt); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not read history"})
 			return
 		}

@@ -97,9 +97,11 @@ func main() {
 	mux.HandleFunc("GET /api/v1/sync/conflicts", syncHandler.Conflicts)
 	mux.HandleFunc("POST /api/v1/sync/conflicts/resolve", syncHandler.ResolveConflict)
 	taskHandler := tasks.Handler{DB: pool, Auth: authHandler, StoragePath: cfg.StoragePath, ClamScanPath: cfg.ClamScanPath, RetentionDays: cfg.RetentionDays, BackupVerified: cfg.BackupVerified}
+	workflowHandler := workflow.Handler{DB: pool, Auth: authHandler}
 	if pool != nil {
 		go taskHandler.StartRecurringWorker(context.Background())
 		go taskHandler.StartRetentionWorker(context.Background())
+		go workflowHandler.StartReminderWorker(context.Background())
 	}
 	mux.Handle("GET /api/v1/tasks", authHandler.RequirePermission("tasks.read", http.HandlerFunc(taskHandler.List)))
 	mux.Handle("POST /api/v1/tasks", authHandler.RequirePermission("tasks.manage", http.HandlerFunc(taskHandler.Create)))
@@ -160,7 +162,6 @@ func main() {
 	mux.Handle("POST /api/v1/expenses", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.Expenses)))
 	mux.Handle("POST /api/v1/expenses/{id}/submit", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.Submit)))
 	mux.Handle("POST /api/v1/expenses/{id}/pay", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.MarkPaid)))
-	workflowHandler := workflow.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/workflow/definitions", authHandler.RequirePermission("workflow.read", http.HandlerFunc(workflowHandler.Definitions)))
 	mux.Handle("POST /api/v1/workflow/definitions", authHandler.RequirePermission("workflow.manage", http.HandlerFunc(workflowHandler.CreateDefinition)))
 	mux.Handle("GET /api/v1/workflow/instances", authHandler.RequirePermission("workflow.read", http.HandlerFunc(workflowHandler.Instances)))
@@ -170,6 +171,9 @@ func main() {
 	mux.Handle("POST /api/v1/workflow/instances/{id}/reject", authHandler.RequirePermission("workflow.act", http.HandlerFunc(workflowHandler.Reject)))
 	mux.Handle("POST /api/v1/workflow/instances/{id}/resubmit", authHandler.RequirePermission("workflow.manage", http.HandlerFunc(workflowHandler.Resubmit)))
 	mux.Handle("POST /api/v1/workflow/instances/{id}/cancel", authHandler.RequirePermission("workflow.manage", http.HandlerFunc(workflowHandler.Cancel)))
+	mux.Handle("GET /api/v1/workflow/delegations", authHandler.RequirePermission("workflow.act", http.HandlerFunc(workflowHandler.Delegations)))
+	mux.Handle("POST /api/v1/workflow/delegations", authHandler.RequirePermission("workflow.act", http.HandlerFunc(workflowHandler.Delegations)))
+	mux.Handle("POST /api/v1/workflow/delegations/{id}/revoke", authHandler.RequirePermission("workflow.act", http.HandlerFunc(workflowHandler.RevokeDelegation)))
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
