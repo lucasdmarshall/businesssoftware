@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"name/backend/internal/auth"
+	"name/backend/internal/workflow"
 )
 
 type Handler struct {
@@ -16,15 +17,16 @@ type Handler struct {
 }
 
 type Request struct {
-	ID          string    `json:"id"`
-	RequestedBy string    `json:"requested_by"`
-	DisplayName string    `json:"display_name,omitempty"`
-	LeaveType   string    `json:"leave_type"`
-	StartDate   string    `json:"start_date"`
-	EndDate     string    `json:"end_date"`
-	Reason      string    `json:"reason"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID                 string    `json:"id"`
+	RequestedBy        string    `json:"requested_by"`
+	DisplayName        string    `json:"display_name,omitempty"`
+	LeaveType          string    `json:"leave_type"`
+	StartDate          string    `json:"start_date"`
+	EndDate            string    `json:"end_date"`
+	Reason             string    `json:"reason"`
+	Status             string    `json:"status"`
+	WorkflowInstanceID string    `json:"workflow_instance_id,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 type createRequest struct {
@@ -43,7 +45,7 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 		return
 	}
-	rows, err := h.DB.Query(r.Context(), `SELECT l.id,l.requested_by,u.display_name,l.leave_type,l.start_date::text,l.end_date::text,l.reason,l.status,l.created_at FROM leave_requests l JOIN users u ON u.id=l.requested_by WHERE l.organization_id=$1 ORDER BY l.created_at DESC LIMIT 500`, user.OrganizationID)
+	rows, err := h.DB.Query(r.Context(), `SELECT l.id,l.requested_by,u.display_name,l.leave_type,l.start_date::text,l.end_date::text,l.reason,l.status,COALESCE(l.workflow_instance_id::text,''),l.created_at FROM leave_requests l JOIN users u ON u.id=l.requested_by WHERE l.organization_id=$1 ORDER BY l.created_at DESC LIMIT 500`, user.OrganizationID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load leave requests"})
 		return
@@ -52,7 +54,7 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 	items := make([]Request, 0)
 	for rows.Next() {
 		var item Request
-		if err := rows.Scan(&item.ID, &item.RequestedBy, &item.DisplayName, &item.LeaveType, &item.StartDate, &item.EndDate, &item.Reason, &item.Status, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.RequestedBy, &item.DisplayName, &item.LeaveType, &item.StartDate, &item.EndDate, &item.Reason, &item.Status, &item.WorkflowInstanceID, &item.CreatedAt); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not read leave requests"})
 			return
 		}
@@ -81,6 +83,17 @@ func (h Handler) Create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not create leave request"})
 		return
 	}
+
+	// Route through the generic workflow engine when a leave definition exists.
+	definitionID := workflow.FindDefinitionByEntity(r.Context(), h.DB, user.OrganizationID, "leave")
+	if definitionID != "" {
+		title := "Leave: " + item.LeaveType + " (" + item.StartDate + " → " + item.EndDate + ")"
+		instanceID, err := workflow.Start(r.Context(), h.DB, user.OrganizationID, definitionID, title, "leave", item.ID, nil, user.ID)
+		if err == nil {
+			_, _ = h.DB.Exec(r.Context(), `UPDATE leave_requests SET workflow_instance_id=$1 WHERE id=$2`, instanceID, item.ID)
+			item.WorkflowInstanceID = instanceID
+		}
+	}
 	writeJSON(w, http.StatusCreated, item)
 }
 
@@ -99,6 +112,19 @@ func (h Handler) Decide(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(r.URL.Path, "/reject") {
 		status = "rejected"
 	}
+
+	// When a leave request is already in a live workflow, decisions must go
+	// through Approvals rather than the module-local shortcut.
+	var workflowStatus string
+	_ = h.DB.QueryRow(r.Context(), `
+		SELECT COALESCE(i.status,'') FROM leave_requests l
+		LEFT JOIN workflow_instances i ON i.id=l.workflow_instance_id
+		WHERE l.id=$1 AND l.organization_id=$2`, input.ID, user.OrganizationID).Scan(&workflowStatus)
+	if workflowStatus == "in_review" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "this leave request is in a workflow; decide it from Approvals"})
+		return
+	}
+
 	result, err := h.DB.Exec(r.Context(), `UPDATE leave_requests SET status=$1, reviewed_by=$2, updated_at=NOW() WHERE id=$3 AND organization_id=$4 AND status='pending'`, status, user.ID, input.ID, user.OrganizationID)
 	if err != nil || result.RowsAffected() == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "leave request could not be updated"})

@@ -52,6 +52,9 @@ local cache and outbox for device-offline mode.
 
 - Offline-capable: submitting a request or a shift entry (queued).
 - Approvals and rejections are **not** offline actions (see below).
+- When a leave workflow definition exists, new leave requests are routed through
+  the generic workflow engine; module-local approve/reject is blocked while the
+  linked instance is `in_review`.
 
 ## Server-authoritative actions (never offline)
 
@@ -60,6 +63,7 @@ These require the company server and are never applied from the local queue:
 - Permission and role changes
 - Final finance approvals and payroll confirmation
 - Leave and workflow **approval / rejection** decisions
+- Workflow delegations, deadline reminders, and SLA changes
 - User deletion, offboarding, and access revocation
 - MFA enable/disable and password changes
 - Any company-wide destructive action
