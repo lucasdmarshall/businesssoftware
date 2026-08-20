@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -13,7 +14,9 @@ import (
 	"name/backend/internal/auth"
 	"name/backend/internal/config"
 	"name/backend/internal/database"
+	"name/backend/internal/httpapi"
 	"name/backend/internal/leave"
+	"name/backend/internal/orgstructure"
 	"name/backend/internal/rbac"
 	"name/backend/internal/shifts"
 	"name/backend/internal/sync"
@@ -44,6 +47,7 @@ type createOrganizationRequest struct {
 }
 
 func main() {
+	slog.SetDefault(httpapi.NewLogger())
 	cfg := config.FromEnvironment()
 	var pool *pgxpool.Pool
 	if cfg.DatabaseURL != "" {
@@ -112,6 +116,13 @@ func main() {
 	mux.Handle("POST /api/v1/user-roles", authHandler.RequirePermission("roles.manage", http.HandlerFunc(rbacHandler.Assign)))
 	auditHandler := audit.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/audit-logs", authHandler.RequirePermission("organization.read", http.HandlerFunc(auditHandler.List)))
+	orgStructureHandler := orgstructure.Handler{DB: pool, Auth: authHandler}
+	mux.Handle("GET /api/v1/job-titles", authHandler.RequirePermission("organization.read", http.HandlerFunc(orgStructureHandler.JobTitles)))
+	mux.Handle("POST /api/v1/job-titles", authHandler.RequirePermission("organization.manage", http.HandlerFunc(orgStructureHandler.JobTitles)))
+	mux.Handle("POST /api/v1/user-placement", authHandler.RequirePermission("organization.manage", http.HandlerFunc(orgStructureHandler.AssignPlacement)))
+	mux.Handle("GET /api/v1/reporting-lines", authHandler.RequirePermission("organization.read", http.HandlerFunc(orgStructureHandler.ReportingLines)))
+	mux.Handle("POST /api/v1/reporting-lines", authHandler.RequirePermission("organization.manage", http.HandlerFunc(orgStructureHandler.ReportingLines)))
+	mux.Handle("GET /api/v1/files", authHandler.RequirePermission("organization.read", http.HandlerFunc(orgStructureHandler.Files)))
 	workflowHandler := workflow.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/workflow/definitions", authHandler.RequirePermission("workflow.read", http.HandlerFunc(workflowHandler.Definitions)))
 	mux.Handle("POST /api/v1/workflow/definitions", authHandler.RequirePermission("workflow.manage", http.HandlerFunc(workflowHandler.CreateDefinition)))
@@ -125,11 +136,11 @@ func main() {
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           withJSON(withCORS(mux)),
+		Handler:           httpapi.WithRequestLogging(withJSON(withCORS(mux))),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Printf("Name backend listening on http://localhost:%s", cfg.Port)
+	slog.Info("backend listening", "url", "http://localhost:"+cfg.Port)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}

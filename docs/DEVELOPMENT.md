@@ -66,6 +66,33 @@ of them):
 - Backend: `gofmt -l .` (must be empty), `go vet ./...`, `go test ./...`, `go build ./...`
 - Frontend: `npm run lint`, `npm run test`, `npm run build`
 
+## Backend conventions
+
+### Error responses
+
+New handlers use `internal/httpapi` for a single error shape:
+
+```json
+{ "error": { "code": "not_found", "message": "request not found" } }
+```
+
+- `httpapi.WriteJSON(w, status, payload)` for success bodies.
+- `httpapi.WriteError(w, status, code, message)` for failures — `code` is a
+  stable machine-readable slug, `message` is human-readable.
+- Never leak internal error strings to clients; log the detail server-side and
+  return a safe message.
+
+Earlier handlers use a local `writeJSON` with a `{"error": "..."}` shape; migrate
+them to `httpapi` opportunistically rather than in one large change.
+
+### Structured logging
+
+- The default logger is JSON via `log/slog` (`httpapi.NewLogger`, set in
+  `main.go`). Use `slog.Info/Warn/Error` with key/value pairs, not `log.Printf`.
+- `httpapi.WithRequestLogging` logs one line per request (method, path, status,
+  duration). It never logs bodies or query values, which may hold sensitive data.
+- Set `LOG_LEVEL=debug` for verbose logging.
+
 ## LukeLang (reactive engine)
 
 LukeLang is an owner-maintained strategic technology used for selected reactive

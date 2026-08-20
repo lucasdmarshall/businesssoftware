@@ -145,6 +145,10 @@ Completed in this milestone:
 - Frontend now consumes the `sync/pull` change feed (`pullRemoteChanges`) after login and workspace load, writing tasks, leave, shifts, and attendance into the local SQLite caches so a device keeps other clients' synced changes when it later goes offline
 - Phase 0 engineering foundation completed: root `Makefile` and `docs/DEVELOPMENT.md` (commands + environment conventions), gofmt/go vet plus ESLint + Prettier for the frontend, a Go test foundation (`password_test.go`) and a Vitest test foundation (`sync-transform.test.ts`), and a GitHub Actions CI pipeline running both stacks' gates
 - Phase 1 shell finished except blocked `.dmg` packaging: responsive tablet/phone layout and an accessibility baseline (skip link, `aria-current` navigation, labelled connection status, focus-visible outlines)
+- Release targets set to Windows and macOS: Tauri per-platform bundle config and a two-OS release workflow that produces `.msi`/`.exe` and `.app`/`.dmg`
+- Phase 2 platform core: reporting-line model, job-title/position models (job title, position, department, manager, permission role, and data scope kept as separate concepts), and a generic `files` model (migration `015_org_structure_and_files.sql`)
+- Phase 2 APIs added: job-title catalogue list/create, user placement (job title + primary department), reporting-line list/create with single-primary enforcement, and organization file listing
+- Backend conventions established: `internal/httpapi` shared JSON/error helpers with a `{ "error": { code, message } }` shape, a `log/slog` JSON logger, and request-logging middleware; documented in `docs/DEVELOPMENT.md`
 
 Next actions:
 

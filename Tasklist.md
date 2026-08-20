@@ -54,8 +54,8 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Define user model
 - [x] Define department model
 - [x] Define team model
-- [ ] Define reporting line model
-- [ ] Define job title and position models
+- [x] Define reporting line model
+- [x] Define job title and position models
 - [x] Define audit log model
 - [x] Add audit log API
 - [x] Record RBAC and leave decision events
@@ -63,10 +63,11 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Record attendance events
 - [x] Record scheduling events
 - [x] Add Activity audit trail view
-- [ ] Define file and attachment model
+- [x] Define file and attachment model (generic `files` table; task attachments remain specialized)
 - [x] Add health-check endpoint
-- [ ] Add structured logging
-- [ ] Add error handling conventions
+- [x] Add structured logging (`log/slog` JSON logger + request-logging middleware)
+- [x] Add error handling conventions (`internal/httpapi` shared error shape and helpers)
+- [x] Add job-title catalogue, user placement, reporting-line, and file-list APIs
 
 ## Phase 3 — Authentication and RBAC
 
