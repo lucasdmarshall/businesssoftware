@@ -177,10 +177,11 @@ Completed in this milestone:
 - **Finance suite foundation:** chart of accounts, journals, tax codes, customers, AP bills, payments, suite UI tabs — see `docs/FINANCE_SUITE.md` (migration `034_finance_suite.sql`)
 - **Department data isolation:** Leave / Attendance / Tasks / Activity / Calendar / Schedule accept `department_id` and filter to `user_departments` members; People UI assigns membership + head via `/user-departments`
 - **Workflow production depth:** step SLA → instance `due_at`, upcoming/overdue reminder worker, time-boxed delegated approval coverage, set-deadline control — migration `035_workflow_delegation_reminders.sql`
+- **Finance depth:** AP/AR aging reports + bank reconciliation (accounts, statement lines, match/unmatch/exclude) — migration `036_finance_aging_bank_recon.sql`
 
 Next actions:
 
-1. Finance depth (aging reports, bank recon) and Phase 9 packaging.
+1. Phase 9 packaging / licensing polish.
 2. Sales/CRM and IT/Ops remain scaffold-level until scheduled for depth.
 
 ## Active Work

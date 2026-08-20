@@ -2051,6 +2051,8 @@ const FINANCE_TABS: Array<{ id: string; label: string }> = [
   { id: "invoices", label: "Invoices (AR)" },
   { id: "expenses", label: "Expenses" },
   { id: "payments", label: "Payments" },
+  { id: "aging", label: "Aging" },
+  { id: "bank", label: "Bank" },
   { id: "budgets", label: "Budgets" },
   { id: "purchase", label: "Purchase" },
 ];
@@ -2081,6 +2083,15 @@ function FinanceView() {
   const [invoices, setInvoices] = useState<Array<{ id: string; number: string; customer_name: string; amount: number; currency: string; status: string }>>([]);
   const [budgets, setBudgets] = useState<Array<{ id: string; name: string; amount: number; currency: string; period_start: string; period_end: string; spent: number }>>([]);
   const [purchases, setPurchases] = useState<Array<{ id: string; item: string; amount: number; currency: string; status: string; requester_name: string; approval_status: string }>>([]);
+  const [agingSide, setAgingSide] = useState<"ap" | "ar">("ap");
+  const [agingAsOf, setAgingAsOf] = useState(new Date().toISOString().slice(0, 10));
+  const [aging, setAging] = useState<{ as_of: string; side: string; currency: string; total: number; buckets: Array<{ key: string; label: string; count: number; amount: number }>; rows: Array<{ id: string; number: string; party_name: string; due_date: string; days_past_due: number; bucket: string; open_amount: number; currency: string; status: string }> } | null>(null);
+  const [bankAccounts, setBankAccounts] = useState<Array<{ id: string; name: string; currency: string; account_number_masked: string; unmatched_count: number; is_active: boolean }>>([]);
+  const [bankTxns, setBankTxns] = useState<Array<{ id: string; bank_account_id: string; txn_date: string; amount: number; direction: string; description: string; reference: string; status: string; payment_id: string; journal_id: string }>>([]);
+  const [bankAccountId, setBankAccountId] = useState("");
+  const [bankAccountForm, setBankAccountForm] = useState({ name: "", currency: "USD", account_number_masked: "", gl_account_id: "" });
+  const [bankTxnForm, setBankTxnForm] = useState({ txn_date: new Date().toISOString().slice(0, 10), amount: "", direction: "out", description: "", reference: "" });
+  const [bankMatchForm, setBankMatchForm] = useState({ txn_id: "", payment_id: "", journal_id: "" });
 
   const [accountForm, setAccountForm] = useState({ code: "", name: "", account_type: "expense" });
   const [taxForm, setTaxForm] = useState({ code: "", name: "", rate_percent: "10" });
@@ -2101,6 +2112,24 @@ function FinanceView() {
     const err = payload?.error;
     setMessage(response.ok ? ok : (typeof err === "string" ? err : err?.message ?? "Action failed"));
     return response.ok;
+  };
+
+  const loadAging = async (side: "ap" | "ar" = agingSide, asOf = agingAsOf) => {
+    const response = await fetch(`${apiBase}/finance/aging/${side}?as_of=${encodeURIComponent(asOf)}`, { credentials: "include" });
+    if (response.ok) setAging(await response.json());
+  };
+
+  const loadBank = async (accountId = bankAccountId) => {
+    const [accountsRes, txnsRes] = await Promise.all([
+      fetch(`${apiBase}/finance/bank-accounts`, { credentials: "include" }),
+      fetch(`${apiBase}/finance/bank-transactions${accountId ? `?bank_account_id=${encodeURIComponent(accountId)}` : ""}`, { credentials: "include" }),
+    ]);
+    if (accountsRes.ok) {
+      const accounts = await accountsRes.json() as Array<{ id: string; name: string; currency: string; account_number_masked: string; unmatched_count: number; is_active: boolean }>;
+      setBankAccounts(accounts);
+      if (!accountId && accounts[0]) setBankAccountId(accounts[0].id);
+    }
+    if (txnsRes.ok) setBankTxns(await txnsRes.json());
   };
 
   const load = async () => {
@@ -2131,8 +2160,12 @@ function FinanceView() {
     if (inv.ok) setInvoices(await inv.json());
     if (bu.ok) setBudgets(await bu.json());
     if (pr.ok) setPurchases(await pr.json());
+    void loadAging();
+    void loadBank();
   };
   useEffect(() => { void load(); }, []);
+  useEffect(() => { if (tab === "aging") void loadAging(); }, [tab, agingSide, agingAsOf]);
+  useEffect(() => { if (tab === "bank") void loadBank(bankAccountId); }, [tab, bankAccountId]);
 
   return <section className="content-wrap">
     <div className="page-heading">
@@ -2325,6 +2358,107 @@ function FinanceView() {
         </div>
       </form>
       <div className="record-list">{payments.map((payment) => <div className="record-row" key={payment.id}><span className="record-avatar department-avatar">{payment.direction === "in" ? "IN" : "OUT"}</span><span className="record-copy"><strong>{money(payment.amount, payment.currency)} · {payment.method}</strong><small>{payment.paid_on} · {payment.direction === "in" ? (payment.customer_name || "customer") : (payment.vendor_name || "vendor")}{payment.reference ? ` · ${payment.reference}` : ""}</small></span><span className="status-pill">{payment.direction}</span></div>)}</div>
+    </>}
+
+    {tab === "aging" && <>
+      <div className="form-grid" style={{ marginBottom: "1rem" }}>
+        <Dropdown value={agingSide} options={[{ value: "ap", label: "AP (vendor bills)" }, { value: "ar", label: "AR (customer invoices)" }]} onChange={(value) => setAgingSide(value as "ap" | "ar")} ariaLabel="Aging side" />
+        <DatePicker value={agingAsOf} onChange={(value) => setAgingAsOf(value)} ariaLabel="As of date" />
+      </div>
+      {aging && <>
+        <div className="metric-grid">
+          <Metric label="Open total" value={money(aging.total, aging.currency)} change={`as of ${aging.as_of}`} detail={aging.side === "ap" ? "vendor bills" : "customer invoices"} />
+          {aging.buckets.map((bucket) => (
+            <Metric key={bucket.key} label={bucket.label} value={money(bucket.amount, aging.currency)} change={`${bucket.count} open`} detail="past due bucket" />
+          ))}
+        </div>
+        <div className="record-list">{aging.rows.map((row) => (
+          <div className="record-row" key={row.id}>
+            <span className="record-avatar department-avatar">{aging.side === "ap" ? "AP" : "AR"}</span>
+            <span className="record-copy">
+              <strong>{row.number} · {money(row.open_amount, row.currency)}</strong>
+              <small>{row.party_name} · due {row.due_date || "—"} · {row.days_past_due}d past · {row.bucket.replace("_", "–").replace("plus", "+")}</small>
+            </span>
+            <span className="status-pill">{row.status}</span>
+          </div>
+        ))}</div>
+        {aging.rows.length === 0 && <p className="lede">No open {aging.side.toUpperCase()} balances as of {aging.as_of}.</p>}
+      </>}
+      {!aging && <p className="lede">Loading aging report…</p>}
+    </>}
+
+    {tab === "bank" && <>
+      <form className="compact-form" onSubmit={async (event) => {
+        event.preventDefault();
+        if (await post("/finance/bank-accounts", bankAccountForm, "Bank account added")) {
+          setBankAccountForm({ name: "", currency: "USD", account_number_masked: "", gl_account_id: "" });
+          void loadBank();
+        }
+      }}>
+        <p className="eyebrow">Bank account</p>
+        <div className="form-grid">
+          <input placeholder="Name" value={bankAccountForm.name} onChange={(e) => setBankAccountForm({ ...bankAccountForm, name: e.target.value })} required />
+          <input placeholder="Masked account #" value={bankAccountForm.account_number_masked} onChange={(e) => setBankAccountForm({ ...bankAccountForm, account_number_masked: e.target.value })} />
+          <Dropdown value={bankAccountForm.gl_account_id} options={[{ value: "", label: "GL cash account (optional)" }, ...accounts.filter((a) => a.account_type === "asset").map((a) => ({ value: a.id, label: `${a.code} ${a.name}` }))]} onChange={(value) => setBankAccountForm({ ...bankAccountForm, gl_account_id: value })} ariaLabel="GL account" placeholder="GL cash account" />
+          <button className="primary-button" type="submit">Add account</button>
+        </div>
+      </form>
+      <div className="form-grid" style={{ marginBottom: "1rem" }}>
+        <Dropdown value={bankAccountId} options={[{ value: "", label: "Select bank account" }, ...bankAccounts.map((a) => ({ value: a.id, label: `${a.name}${a.unmatched_count ? ` · ${a.unmatched_count} unmatched` : ""}` }))]} onChange={(value) => setBankAccountId(value)} ariaLabel="Bank account" placeholder="Select bank account" />
+      </div>
+      {bankAccountId && <>
+        <form className="compact-form" onSubmit={async (event) => {
+          event.preventDefault();
+          if (await post("/finance/bank-transactions", { ...bankTxnForm, bank_account_id: bankAccountId, amount: Number(bankTxnForm.amount) }, "Statement line added")) {
+            setBankTxnForm({ txn_date: new Date().toISOString().slice(0, 10), amount: "", direction: "out", description: "", reference: "" });
+            void loadBank(bankAccountId);
+          }
+        }}>
+          <p className="eyebrow">Import statement line</p>
+          <div className="form-grid">
+            <DatePicker value={bankTxnForm.txn_date} onChange={(value) => setBankTxnForm({ ...bankTxnForm, txn_date: value })} ariaLabel="Txn date" />
+            <input placeholder="Amount" inputMode="decimal" value={bankTxnForm.amount} onChange={(e) => setBankTxnForm({ ...bankTxnForm, amount: e.target.value.replace(/[^0-9.]/g, "") })} required />
+            <Dropdown value={bankTxnForm.direction} options={[{ value: "in", label: "Money in" }, { value: "out", label: "Money out" }]} onChange={(value) => setBankTxnForm({ ...bankTxnForm, direction: value })} ariaLabel="Direction" />
+            <input placeholder="Description" value={bankTxnForm.description} onChange={(e) => setBankTxnForm({ ...bankTxnForm, description: e.target.value })} />
+            <input placeholder="Reference" value={bankTxnForm.reference} onChange={(e) => setBankTxnForm({ ...bankTxnForm, reference: e.target.value })} />
+            <button className="primary-button" type="submit">Add line</button>
+          </div>
+        </form>
+        <form className="compact-form" onSubmit={async (event) => {
+          event.preventDefault();
+          if (!bankMatchForm.txn_id) { setMessage("Pick a statement line to match"); return; }
+          if (await post(`/finance/bank-transactions/${bankMatchForm.txn_id}/match`, { payment_id: bankMatchForm.payment_id, journal_id: bankMatchForm.journal_id }, "Matched")) {
+            setBankMatchForm({ txn_id: "", payment_id: "", journal_id: "" });
+            void loadBank(bankAccountId);
+          }
+        }}>
+          <p className="eyebrow">Match unmatched line</p>
+          <div className="form-grid">
+            <Dropdown value={bankMatchForm.txn_id} options={[{ value: "", label: "Statement line" }, ...bankTxns.filter((t) => t.status === "unmatched").map((t) => ({ value: t.id, label: `${t.txn_date} · ${t.direction} ${money(t.amount)} · ${t.description || t.reference || "line"}` }))]} onChange={(value) => setBankMatchForm({ ...bankMatchForm, txn_id: value })} ariaLabel="Statement line" placeholder="Statement line" />
+            <Dropdown value={bankMatchForm.payment_id} options={[{ value: "", label: "Payment (optional)" }, ...payments.map((p) => ({ value: p.id, label: `${p.paid_on} · ${money(p.amount, p.currency)} · ${p.direction}` }))]} onChange={(value) => setBankMatchForm({ ...bankMatchForm, payment_id: value })} ariaLabel="Payment" placeholder="Payment" />
+            <Dropdown value={bankMatchForm.journal_id} options={[{ value: "", label: "Journal (optional)" }, ...journals.filter((j) => j.status === "posted").map((j) => ({ value: j.id, label: `${j.entry_date} · ${j.memo || "journal"} · ${money(j.debit_sum)}` }))]} onChange={(value) => setBankMatchForm({ ...bankMatchForm, journal_id: value })} ariaLabel="Journal" placeholder="Journal" />
+            <button className="primary-button" type="submit">Match</button>
+          </div>
+        </form>
+      </>}
+      <div className="record-list">{bankTxns.map((txn) => (
+        <div className="record-row" key={txn.id}>
+          <span className="record-avatar department-avatar">{txn.direction === "in" ? "IN" : "OUT"}</span>
+          <span className="record-copy">
+            <strong>{money(txn.amount)} · {txn.description || "Statement line"}</strong>
+            <small>{txn.txn_date}{txn.reference ? ` · ${txn.reference}` : ""}{txn.payment_id ? " · linked payment" : ""}{txn.journal_id ? " · linked journal" : ""}</small>
+          </span>
+          <span className="status-pill">{txn.status}</span>
+          {txn.status === "unmatched" && <span className="record-actions">
+            <button className="text-button" type="button" onClick={() => setBankMatchForm((current) => ({ ...current, txn_id: txn.id }))}>Select</button>
+            <button className="text-button" type="button" onClick={() => void post(`/finance/bank-transactions/${txn.id}/exclude`, {}, "Excluded").then((ok) => { if (ok) void loadBank(bankAccountId); })}>Exclude</button>
+          </span>}
+          {txn.status === "matched" && <span className="record-actions">
+            <button className="text-button" type="button" onClick={() => void post(`/finance/bank-transactions/${txn.id}/unmatch`, {}, "Unmatched").then((ok) => { if (ok) void loadBank(bankAccountId); })}>Unmatch</button>
+          </span>}
+        </div>
+      ))}</div>
+      {bankAccounts.length === 0 && <p className="lede">Add a bank account to start reconciling statement lines to payments or journals.</p>}
     </>}
 
     {tab === "budgets" && <>

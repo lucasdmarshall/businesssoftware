@@ -236,6 +236,8 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Finance suite: chart of accounts, journals, tax codes, customers
 - [x] AP bills + payments (cash in/out linked to bills/invoices)
 - [x] Suite UI tabs (Overview → Purchase)
+- [x] Aging reports (AP/AR buckets by days past due)
+- [x] Bank reconciliation (accounts, statement lines, match to payment/journal)
 
 ### Sales and CRM
 
