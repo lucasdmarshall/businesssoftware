@@ -8,7 +8,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  CircleHelp,
   ClipboardCheck,
   Clock3,
   CalendarDays,
