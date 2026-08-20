@@ -15,10 +15,13 @@ import (
 	"name/backend/internal/auth"
 	"name/backend/internal/calendar"
 	"name/backend/internal/config"
+	"name/backend/internal/crm"
 	"name/backend/internal/dashboard"
 	"name/backend/internal/database"
 	"name/backend/internal/finance"
+	"name/backend/internal/hr"
 	"name/backend/internal/httpapi"
+	"name/backend/internal/itops"
 	"name/backend/internal/leave"
 	"name/backend/internal/notifications"
 	"name/backend/internal/orgstructure"
@@ -165,6 +168,39 @@ func main() {
 	mux.Handle("POST /api/v1/expenses", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.Expenses)))
 	mux.Handle("POST /api/v1/expenses/{id}/submit", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.Submit)))
 	mux.Handle("POST /api/v1/expenses/{id}/pay", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.MarkPaid)))
+	mux.Handle("GET /api/v1/invoices", authHandler.RequirePermission("finance.read", http.HandlerFunc(financeHandler.Invoices)))
+	mux.Handle("POST /api/v1/invoices", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.Invoices)))
+	mux.Handle("POST /api/v1/invoices/status", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.SetInvoiceStatus)))
+	mux.Handle("GET /api/v1/budgets", authHandler.RequirePermission("finance.read", http.HandlerFunc(financeHandler.Budgets)))
+	mux.Handle("POST /api/v1/budgets", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.Budgets)))
+	mux.Handle("GET /api/v1/purchase-requests", authHandler.RequirePermission("finance.read", http.HandlerFunc(financeHandler.PurchaseRequests)))
+	mux.Handle("POST /api/v1/purchase-requests", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.PurchaseRequests)))
+	mux.Handle("POST /api/v1/purchase-requests/{id}/submit", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.SubmitPurchaseRequest)))
+	hrHandler := hr.Handler{DB: pool, Auth: authHandler}
+	mux.Handle("GET /api/v1/hr/profiles", authHandler.RequirePermission("hr.read", http.HandlerFunc(hrHandler.Profiles)))
+	mux.Handle("POST /api/v1/hr/profiles", authHandler.RequirePermission("hr.manage", http.HandlerFunc(hrHandler.UpsertProfile)))
+	mux.Handle("GET /api/v1/hr/onboarding", authHandler.RequirePermission("hr.read", http.HandlerFunc(hrHandler.Onboarding)))
+	mux.Handle("POST /api/v1/hr/onboarding", authHandler.RequirePermission("hr.manage", http.HandlerFunc(hrHandler.Onboarding)))
+	mux.Handle("GET /api/v1/hr/documents", authHandler.RequirePermission("hr.read", http.HandlerFunc(hrHandler.Documents)))
+	mux.Handle("POST /api/v1/hr/documents", authHandler.RequirePermission("hr.manage", http.HandlerFunc(hrHandler.Documents)))
+	crmHandler := crm.Handler{DB: pool, Auth: authHandler}
+	mux.Handle("GET /api/v1/crm/companies", authHandler.RequirePermission("sales.read", http.HandlerFunc(crmHandler.Companies)))
+	mux.Handle("POST /api/v1/crm/companies", authHandler.RequirePermission("sales.manage", http.HandlerFunc(crmHandler.Companies)))
+	mux.Handle("GET /api/v1/crm/contacts", authHandler.RequirePermission("sales.read", http.HandlerFunc(crmHandler.Contacts)))
+	mux.Handle("POST /api/v1/crm/contacts", authHandler.RequirePermission("sales.manage", http.HandlerFunc(crmHandler.Contacts)))
+	mux.Handle("GET /api/v1/crm/leads", authHandler.RequirePermission("sales.read", http.HandlerFunc(crmHandler.Leads)))
+	mux.Handle("POST /api/v1/crm/leads", authHandler.RequirePermission("sales.manage", http.HandlerFunc(crmHandler.Leads)))
+	mux.Handle("GET /api/v1/crm/opportunities", authHandler.RequirePermission("sales.read", http.HandlerFunc(crmHandler.Opportunities)))
+	mux.Handle("POST /api/v1/crm/opportunities", authHandler.RequirePermission("sales.manage", http.HandlerFunc(crmHandler.Opportunities)))
+	mux.Handle("GET /api/v1/crm/activities", authHandler.RequirePermission("sales.read", http.HandlerFunc(crmHandler.Activities)))
+	mux.Handle("POST /api/v1/crm/activities", authHandler.RequirePermission("sales.manage", http.HandlerFunc(crmHandler.Activities)))
+	itopsHandler := itops.Handler{DB: pool, Auth: authHandler}
+	mux.Handle("GET /api/v1/itops/tickets", authHandler.RequirePermission("itops.read", http.HandlerFunc(itopsHandler.Tickets)))
+	mux.Handle("POST /api/v1/itops/tickets", authHandler.RequirePermission("itops.manage", http.HandlerFunc(itopsHandler.Tickets)))
+	mux.Handle("GET /api/v1/itops/assets", authHandler.RequirePermission("itops.read", http.HandlerFunc(itopsHandler.Assets)))
+	mux.Handle("POST /api/v1/itops/assets", authHandler.RequirePermission("itops.manage", http.HandlerFunc(itopsHandler.Assets)))
+	mux.Handle("GET /api/v1/itops/kb", authHandler.RequirePermission("itops.read", http.HandlerFunc(itopsHandler.Articles)))
+	mux.Handle("POST /api/v1/itops/kb", authHandler.RequirePermission("itops.manage", http.HandlerFunc(itopsHandler.Articles)))
 	analyticsHandler := analytics.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/analytics/spending", authHandler.RequirePermission("analytics.read", http.HandlerFunc(analyticsHandler.Spending)))
 	mux.Handle("GET /api/v1/analytics/attendance", authHandler.RequirePermission("analytics.read", http.HandlerFunc(analyticsHandler.Attendance)))

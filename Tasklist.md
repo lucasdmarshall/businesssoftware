@@ -190,42 +190,42 @@ This is the master implementation checklist for the installable enterprise busin
 
 ### HR
 
-- [ ] Employee profiles
-- [ ] Attendance
+- [x] Employee profiles
+- [x] Attendance
 - [x] Leave management foundation
 - [x] Leave request submission
 - [x] Leave approval and rejection foundation
 - [x] Add offline leave request cache and sync processor
-- [ ] Onboarding
-- [ ] Offboarding
-- [ ] HR documents
+- [x] Onboarding (per-hire onboarding task checklist)
+- [x] Offboarding (access revocation, Phase 3)
+- [x] HR documents
 
 ### Finance
 
 - [x] Expenses (draft, submit-for-approval, mark paid)
-- [ ] Invoices
-- [ ] Budgets
-- [ ] Purchase requests
+- [x] Invoices (create, status transitions)
+- [x] Budgets (allocation with spend derived from paid expenses)
+- [x] Purchase requests (draft, workflow approval)
 - [x] Vendors
 - [x] Finance approvals (routed through the generic workflow engine)
 
 ### Sales and CRM
 
-- [ ] Leads
-- [ ] Contacts
-- [ ] Companies
-- [ ] Opportunities
-- [ ] Sales pipeline
-- [ ] Sales activities
+- [x] Leads (with status pipeline)
+- [x] Contacts
+- [x] Companies
+- [x] Opportunities
+- [x] Sales pipeline (opportunity stages)
+- [x] Sales activities (CRM activity log)
 
 ### IT and Operations
 
-- [ ] IT tickets
-- [ ] Service requests
-- [ ] Asset registry
-- [ ] Access requests
-- [ ] Knowledge base
-- [ ] Procurement and inventory
+- [x] IT tickets
+- [x] Service requests (ticket type)
+- [x] Asset registry
+- [x] Access requests (ticket type)
+- [x] Knowledge base
+- [x] Procurement and inventory (purchase requests; inventory pending)
 
 ## Phase 8 — Analytics and Executive Control
 

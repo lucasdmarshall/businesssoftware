@@ -10,12 +10,15 @@ import {
   Clock3,
   CalendarDays,
   FolderKanban,
+  IdCard,
   LayoutDashboard,
+  LifeBuoy,
   LineChart,
   Moon,
   PanelLeft,
   Search,
   Sun,
+  Target,
   UsersRound,
   Wallet,
 } from "lucide-react";
@@ -46,7 +49,7 @@ type CalendarEvent = { id: string; title: string; description: string; starts_at
 
 const workflowStatusClass: Record<string, string> = { in_review: "leave-pending", approved: "leave-approved", rejected: "leave-rejected", cancelled: "leave-rejected", draft: "" };
 
-const viewForLabel = (label: string): string => label === "People" ? "people" : label === "Work" ? "work" : label === "Projects" ? "projects" : label === "Approvals" ? "approvals" : label === "Finance" ? "finance" : label === "Reports" ? "reports" : label === "Calendar" ? "calendar" : label === "Attendance" ? "attendance" : label === "Leave" ? "leave" : label === "Schedule" ? "schedule" : label === "Activity" ? "activity" : "overview";
+const viewForLabel = (label: string): string => label === "People" ? "people" : label === "Work" ? "work" : label === "Projects" ? "projects" : label === "Approvals" ? "approvals" : label === "Finance" ? "finance" : label === "HR" ? "hr" : label === "Sales" ? "sales" : label === "IT" ? "it" : label === "Reports" ? "reports" : label === "Calendar" ? "calendar" : label === "Attendance" ? "attendance" : label === "Leave" ? "leave" : label === "Schedule" ? "schedule" : label === "Activity" ? "activity" : "overview";
 
 const apiBase = "http://localhost:8080/api/v1";
 
@@ -56,6 +59,9 @@ const navigation = [
   { label: "Projects", icon: FolderKanban, permission: "projects.read" },
   { label: "Approvals", icon: ClipboardCheck, permission: "workflow.read" },
   { label: "Finance", icon: Wallet, permission: "finance.read" },
+  { label: "HR", icon: IdCard, permission: "hr.read" },
+  { label: "Sales", icon: Target, permission: "sales.read" },
+  { label: "IT", icon: LifeBuoy, permission: "itops.read" },
   { label: "Reports", icon: LineChart, permission: "analytics.read" },
   { label: "Calendar", icon: CalendarDays, permission: "calendar.read" },
   { label: "Attendance", icon: Clock3, permission: "attendance.read" },
@@ -201,7 +207,7 @@ function App() {
           </div>
         </header>
 
-        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "projects" ? <ProjectsView /> : activeView === "approvals" ? <WorkflowView /> : activeView === "finance" ? <FinanceView /> : activeView === "reports" ? <ReportsView /> : activeView === "calendar" ? <CalendarView /> : activeView === "attendance" ? <AttendanceView /> : activeView === "leave" ? <LeaveView /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : <section className="content-wrap">
+        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "projects" ? <ProjectsView /> : activeView === "approvals" ? <WorkflowView /> : activeView === "finance" ? <FinanceView /> : activeView === "hr" ? <HRView /> : activeView === "sales" ? <SalesView /> : activeView === "it" ? <ITView /> : activeView === "reports" ? <ReportsView /> : activeView === "calendar" ? <CalendarView /> : activeView === "attendance" ? <AttendanceView /> : activeView === "leave" ? <LeaveView /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : <section className="content-wrap">
           <div className="page-heading">
             <div>
               <p className="eyebrow">Wednesday, 20 August 2026</p>
@@ -698,7 +704,172 @@ function FinanceView() {
     <div className="record-list">{expenses.map((expense) => <div className="record-row" key={expense.id}><span className="record-avatar"><Wallet size={15} /></span><span className="record-copy"><strong>{expense.description} · {money(expense)}</strong><small>{expense.category}{expense.vendor_name ? ` · ${expense.vendor_name}` : ""} · by {expense.submitter_name}{expense.approval_status ? ` · approval: ${expense.approval_status.replace("_", " ")}` : ""}</small></span><span className={`status-pill ${expenseStatusClass[expense.approval_status || expense.status] ?? ""}`}>{expense.status}</span>{expense.status === "draft" && <span className="record-actions"><button className="text-button" type="button" onClick={() => void act(expense.id, "submit")}>Submit</button></span>}{expense.status === "submitted" && (expense.approval_status === "approved" || expense.approval_status === "") && <span className="record-actions"><button className="text-button" type="button" onClick={() => void act(expense.id, "pay")}>Mark paid</button></span>}</div>)}</div>
 
     {vendors.length > 0 && <><div className="section-heading task-heading"><div><p className="eyebrow">Vendors</p><h2>{vendors.length}</h2></div></div><div className="record-list">{vendors.map((vendor) => <div className="record-row" key={vendor.id}><span className="record-avatar department-avatar">{vendor.name.slice(0, 2).toUpperCase()}</span><span className="record-copy"><strong>{vendor.name}</strong><small>{vendor.contact_email || "no email"}{vendor.contact_phone ? ` · ${vendor.contact_phone}` : ""}</small></span><span className="status-pill">{vendor.status}</span></div>)}</div></>}
+    <FinanceExtras />
   </section>;
+}
+
+function HRView() {
+  const [profiles, setProfiles] = useState<Array<{ user_id: string; display_name: string; email: string; phone: string; hire_date: string; employment_type: string; job_title: string }>>([]);
+  const [onboarding, setOnboarding] = useState<Array<{ id: string; user_id: string; user_name: string; title: string; status: string }>>([]);
+  const [documents, setDocuments] = useState<Array<{ id: string; user_name: string; title: string; doc_type: string }>>([]);
+  const [profileForm, setProfileForm] = useState({ user_id: "", phone: "", hire_date: "", employment_type: "full_time" });
+  const [onboardForm, setOnboardForm] = useState({ user_id: "", title: "" });
+  const [docForm, setDocForm] = useState({ user_id: "", title: "", doc_type: "contract" });
+  const [message, setMessage] = useState("");
+
+  const load = async () => {
+    const [p, o, d] = await Promise.all([
+      fetch(`${apiBase}/hr/profiles`, { credentials: "include" }),
+      fetch(`${apiBase}/hr/onboarding`, { credentials: "include" }),
+      fetch(`${apiBase}/hr/documents`, { credentials: "include" }),
+    ]);
+    if (p.ok) setProfiles(await p.json());
+    if (o.ok) setOnboarding(await o.json());
+    if (d.ok) setDocuments(await d.json());
+  };
+  useEffect(() => { void load(); }, []);
+  const post = async (url: string, body: unknown, ok: string) => { const r = await fetch(`${apiBase}${url}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); setMessage(r.ok ? ok : ((await r.json()).error?.message ?? "Action failed")); await load(); return r.ok; };
+
+  return <section className="content-wrap">
+    <div className="page-heading"><div><p className="eyebrow">Human Resources</p><h1>People operations.</h1><p className="lede">Employee profiles, onboarding, and HR documents.</p></div></div>
+    {message && <p className="inline-message">{message}</p>}
+    <div className="section-heading task-heading"><div><p className="eyebrow">Directory</p><h2>{profiles.length} employees</h2></div></div>
+    <div className="record-list">{profiles.map((p) => <div className="record-row" key={p.user_id}><span className="record-avatar">{p.display_name.slice(0, 1).toUpperCase()}</span><span className="record-copy"><strong>{p.display_name}{p.job_title ? ` · ${p.job_title}` : ""}</strong><small>{p.email}{p.phone ? ` · ${p.phone}` : ""}{p.hire_date ? ` · hired ${p.hire_date}` : ""} · {p.employment_type.replace("_", " ")}</small></span></div>)}</div>
+    <form className="user-form" onSubmit={async (e) => { e.preventDefault(); if (await post("/hr/profiles", profileForm, "Profile saved")) setProfileForm({ user_id: "", phone: "", hire_date: "", employment_type: "full_time" }); }}><p className="eyebrow">Update employee profile</p><div className="form-grid"><select value={profileForm.user_id} onChange={(e) => setProfileForm({ ...profileForm, user_id: e.target.value })} required><option value="">Select person</option>{profiles.map((p) => <option key={p.user_id} value={p.user_id}>{p.display_name}</option>)}</select><input placeholder="Phone" value={profileForm.phone} onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })} /><input type="date" value={profileForm.hire_date} onChange={(e) => setProfileForm({ ...profileForm, hire_date: e.target.value })} /></div><select className="scope-select" value={profileForm.employment_type} onChange={(e) => setProfileForm({ ...profileForm, employment_type: e.target.value })}><option value="full_time">Full time</option><option value="part_time">Part time</option><option value="contract">Contract</option><option value="intern">Intern</option></select><button className="primary-button" type="submit">Save profile</button></form>
+
+    <div className="section-heading task-heading"><div><p className="eyebrow">Onboarding</p><h2>{onboarding.filter((o) => o.status !== "done").length} open</h2></div></div>
+    <form className="task-composer workflow-composer" onSubmit={async (e) => { e.preventDefault(); if (await post("/hr/onboarding", onboardForm, "Onboarding task added")) setOnboardForm({ user_id: "", title: "" }); }}><select value={onboardForm.user_id} onChange={(e) => setOnboardForm({ ...onboardForm, user_id: e.target.value })} required><option value="">New hire</option>{profiles.map((p) => <option key={p.user_id} value={p.user_id}>{p.display_name}</option>)}</select><input placeholder="Onboarding task" value={onboardForm.title} onChange={(e) => setOnboardForm({ ...onboardForm, title: e.target.value })} required /><button className="primary-button" type="submit">Add</button></form>
+    <div className="record-list">{onboarding.map((o) => <div className="record-row" key={o.id}><span className={`task-status ${o.status === "done" ? "done" : ""}`} /><span className="record-copy"><strong>{o.title}</strong><small>{o.user_name}</small></span><span className="record-actions"><button className="text-button muted" type="button" onClick={() => void post("/hr/onboarding", { id: o.id, done: o.status !== "done" }, "Updated")}>{o.status === "done" ? "Reopen" : "Mark done"}</button></span></div>)}</div>
+
+    <div className="section-heading task-heading"><div><p className="eyebrow">Documents</p><h2>{documents.length}</h2></div></div>
+    <form className="task-composer workflow-composer" onSubmit={async (e) => { e.preventDefault(); if (await post("/hr/documents", docForm, "Document registered")) setDocForm({ user_id: "", title: "", doc_type: "contract" }); }}><select value={docForm.user_id} onChange={(e) => setDocForm({ ...docForm, user_id: e.target.value })} required><option value="">Employee</option>{profiles.map((p) => <option key={p.user_id} value={p.user_id}>{p.display_name}</option>)}</select><input placeholder="Document title" value={docForm.title} onChange={(e) => setDocForm({ ...docForm, title: e.target.value })} required /><select value={docForm.doc_type} onChange={(e) => setDocForm({ ...docForm, doc_type: e.target.value })}><option value="contract">Contract</option><option value="id">ID</option><option value="review">Review</option><option value="general">General</option></select><button className="primary-button" type="submit">Register</button></form>
+    <div className="record-list">{documents.map((d) => <div className="record-row" key={d.id}><span className="record-avatar department-avatar">D</span><span className="record-copy"><strong>{d.title}</strong><small>{d.user_name} · {d.doc_type}</small></span></div>)}</div>
+  </section>;
+}
+
+function SalesView() {
+  const [leads, setLeads] = useState<Array<{ id: string; name: string; contact_email: string; source: string; status: string; owner_name: string }>>([]);
+  const [opps, setOpps] = useState<Array<{ id: string; name: string; stage: string; amount: number; currency: string; company_name: string; owner_name: string }>>([]);
+  const [companies, setCompanies] = useState<Array<{ id: string; name: string; industry: string; website: string }>>([]);
+  const [leadForm, setLeadForm] = useState({ name: "", contact_email: "", source: "website" });
+  const [oppForm, setOppForm] = useState({ name: "", amount: "", company_id: "" });
+  const [companyForm, setCompanyForm] = useState({ name: "", industry: "" });
+  const [message, setMessage] = useState("");
+  const stages = ["prospect", "qualified", "proposal", "won", "lost"];
+
+  const load = async () => {
+    const [l, o, c] = await Promise.all([
+      fetch(`${apiBase}/crm/leads`, { credentials: "include" }),
+      fetch(`${apiBase}/crm/opportunities`, { credentials: "include" }),
+      fetch(`${apiBase}/crm/companies`, { credentials: "include" }),
+    ]);
+    if (l.ok) setLeads(await l.json());
+    if (o.ok) setOpps(await o.json());
+    if (c.ok) setCompanies(await c.json());
+  };
+  useEffect(() => { void load(); }, []);
+  const post = async (url: string, body: unknown, ok: string) => { const r = await fetch(`${apiBase}${url}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); setMessage(r.ok ? ok : ((await r.json()).error?.message ?? "Action failed")); await load(); return r.ok; };
+  const pipelineTotal = opps.filter((o) => o.stage !== "lost").reduce((sum, o) => sum + o.amount, 0);
+
+  return <section className="content-wrap">
+    <div className="page-heading"><div><p className="eyebrow">Sales & CRM</p><h1>Pipeline & customers.</h1><p className="lede">Leads, opportunities, and the companies you sell to. Open pipeline: {pipelineTotal.toLocaleString()}.</p></div></div>
+    {message && <p className="inline-message">{message}</p>}
+    <div className="section-heading task-heading"><div><p className="eyebrow">Opportunities</p><h2>{opps.length}</h2></div></div>
+    <form className="task-composer workflow-composer" onSubmit={async (e) => { e.preventDefault(); if (await post("/crm/opportunities", { name: oppForm.name, amount: Number(oppForm.amount || 0), company_id: oppForm.company_id }, "Opportunity created")) setOppForm({ name: "", amount: "", company_id: "" }); }}><input placeholder="Opportunity name" value={oppForm.name} onChange={(e) => setOppForm({ ...oppForm, name: e.target.value })} required /><input placeholder="Amount" inputMode="decimal" value={oppForm.amount} onChange={(e) => setOppForm({ ...oppForm, amount: e.target.value.replace(/[^0-9.]/g, "") })} /><select value={oppForm.company_id} onChange={(e) => setOppForm({ ...oppForm, company_id: e.target.value })}><option value="">No company</option>{companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select><button className="primary-button" type="submit">Add</button></form>
+    <div className="record-list">{opps.map((o) => <div className="record-row" key={o.id}><span className="record-avatar"><Target size={15} /></span><span className="record-copy"><strong>{o.name} · {o.currency} {o.amount.toLocaleString()}</strong><small>{o.company_name || "no company"}{o.owner_name ? ` · ${o.owner_name}` : ""}</small></span><select className="scope-select" value={o.stage} onChange={(e) => void post("/crm/opportunities", { id: o.id, stage: e.target.value }, "Stage updated")}>{stages.map((s) => <option key={s} value={s}>{s}</option>)}</select></div>)}</div>
+
+    <div className="section-heading task-heading"><div><p className="eyebrow">Leads</p><h2>{leads.length}</h2></div></div>
+    <form className="task-composer workflow-composer" onSubmit={async (e) => { e.preventDefault(); if (await post("/crm/leads", leadForm, "Lead created")) setLeadForm({ name: "", contact_email: "", source: "website" }); }}><input placeholder="Lead name" value={leadForm.name} onChange={(e) => setLeadForm({ ...leadForm, name: e.target.value })} required /><input placeholder="Email" value={leadForm.contact_email} onChange={(e) => setLeadForm({ ...leadForm, contact_email: e.target.value })} /><select value={leadForm.source} onChange={(e) => setLeadForm({ ...leadForm, source: e.target.value })}><option value="website">Website</option><option value="referral">Referral</option><option value="event">Event</option><option value="other">Other</option></select><button className="primary-button" type="submit">Add</button></form>
+    <div className="record-list">{leads.map((l) => <div className="record-row" key={l.id}><span className="record-avatar department-avatar">{l.name.slice(0, 1).toUpperCase()}</span><span className="record-copy"><strong>{l.name}</strong><small>{l.contact_email || "no email"} · {l.source}</small></span><select className="scope-select" value={l.status} onChange={(e) => void post("/crm/leads", { id: l.id, status: e.target.value }, "Lead updated")}>{["new", "qualified", "converted", "lost"].map((s) => <option key={s} value={s}>{s}</option>)}</select></div>)}</div>
+
+    <div className="section-heading task-heading"><div><p className="eyebrow">Companies</p><h2>{companies.length}</h2></div></div>
+    <form className="task-composer workflow-composer" onSubmit={async (e) => { e.preventDefault(); if (await post("/crm/companies", companyForm, "Company added")) setCompanyForm({ name: "", industry: "" }); }}><input placeholder="Company name" value={companyForm.name} onChange={(e) => setCompanyForm({ ...companyForm, name: e.target.value })} required /><input placeholder="Industry" value={companyForm.industry} onChange={(e) => setCompanyForm({ ...companyForm, industry: e.target.value })} /><button className="primary-button" type="submit">Add</button></form>
+    <div className="record-list">{companies.map((c) => <div className="record-row" key={c.id}><span className="record-avatar department-avatar">{c.name.slice(0, 2).toUpperCase()}</span><span className="record-copy"><strong>{c.name}</strong><small>{c.industry || "—"}{c.website ? ` · ${c.website}` : ""}</small></span></div>)}</div>
+  </section>;
+}
+
+function ITView() {
+  const [tickets, setTickets] = useState<Array<{ id: string; type: string; title: string; priority: string; status: string; requester_name: string; assignee_name: string }>>([]);
+  const [assets, setAssets] = useState<Array<{ id: string; name: string; category: string; serial_number: string; status: string; assignee_name: string }>>([]);
+  const [articles, setArticles] = useState<Array<{ id: string; title: string; category: string; author_name: string }>>([]);
+  const [ticketForm, setTicketForm] = useState({ type: "ticket", title: "", priority: "normal" });
+  const [assetForm, setAssetForm] = useState({ name: "", category: "hardware", serial_number: "" });
+  const [kbForm, setKbForm] = useState({ title: "", body: "", category: "general" });
+  const [message, setMessage] = useState("");
+
+  const load = async () => {
+    const [t, a, k] = await Promise.all([
+      fetch(`${apiBase}/itops/tickets`, { credentials: "include" }),
+      fetch(`${apiBase}/itops/assets`, { credentials: "include" }),
+      fetch(`${apiBase}/itops/kb`, { credentials: "include" }),
+    ]);
+    if (t.ok) setTickets(await t.json());
+    if (a.ok) setAssets(await a.json());
+    if (k.ok) setArticles(await k.json());
+  };
+  useEffect(() => { void load(); }, []);
+  const post = async (url: string, body: unknown, ok: string) => { const r = await fetch(`${apiBase}${url}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); setMessage(r.ok ? ok : ((await r.json()).error?.message ?? "Action failed")); await load(); return r.ok; };
+
+  return <section className="content-wrap">
+    <div className="page-heading"><div><p className="eyebrow">IT & Operations</p><h1>Service desk.</h1><p className="lede">Tickets, service and access requests, the asset registry, and the knowledge base.</p></div></div>
+    {message && <p className="inline-message">{message}</p>}
+    <div className="section-heading task-heading"><div><p className="eyebrow">Tickets</p><h2>{tickets.filter((t) => t.status !== "closed" && t.status !== "resolved").length} open</h2></div></div>
+    <form className="task-composer workflow-composer" onSubmit={async (e) => { e.preventDefault(); if (await post("/itops/tickets", ticketForm, "Ticket created")) setTicketForm({ type: "ticket", title: "", priority: "normal" }); }}><input placeholder="What do you need?" value={ticketForm.title} onChange={(e) => setTicketForm({ ...ticketForm, title: e.target.value })} required /><select value={ticketForm.type} onChange={(e) => setTicketForm({ ...ticketForm, type: e.target.value })}><option value="ticket">Ticket</option><option value="service_request">Service request</option><option value="access_request">Access request</option><option value="incident">Incident</option></select><select value={ticketForm.priority} onChange={(e) => setTicketForm({ ...ticketForm, priority: e.target.value })}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select><button className="primary-button" type="submit">Raise</button></form>
+    <div className="record-list">{tickets.map((t) => <div className="record-row" key={t.id}><span className="record-avatar"><LifeBuoy size={15} /></span><span className="record-copy"><strong>{t.title}</strong><small>{t.type.replace("_", " ")} · {t.priority} · by {t.requester_name}{t.assignee_name ? ` · ${t.assignee_name}` : ""}</small></span><select className="scope-select" value={t.status} onChange={(e) => void post("/itops/tickets", { id: t.id, status: e.target.value }, "Ticket updated")}>{["open", "in_progress", "resolved", "closed"].map((s) => <option key={s} value={s}>{s.replace("_", " ")}</option>)}</select></div>)}</div>
+
+    <div className="section-heading task-heading"><div><p className="eyebrow">Assets</p><h2>{assets.length}</h2></div></div>
+    <form className="task-composer workflow-composer" onSubmit={async (e) => { e.preventDefault(); if (await post("/itops/assets", assetForm, "Asset added")) setAssetForm({ name: "", category: "hardware", serial_number: "" }); }}><input placeholder="Asset name" value={assetForm.name} onChange={(e) => setAssetForm({ ...assetForm, name: e.target.value })} required /><select value={assetForm.category} onChange={(e) => setAssetForm({ ...assetForm, category: e.target.value })}><option value="hardware">Hardware</option><option value="software">Software</option><option value="license">License</option></select><input placeholder="Serial #" value={assetForm.serial_number} onChange={(e) => setAssetForm({ ...assetForm, serial_number: e.target.value })} /><button className="primary-button" type="submit">Add</button></form>
+    <div className="record-list">{assets.map((a) => <div className="record-row" key={a.id}><span className="record-avatar department-avatar">{a.name.slice(0, 2).toUpperCase()}</span><span className="record-copy"><strong>{a.name}</strong><small>{a.category}{a.serial_number ? ` · ${a.serial_number}` : ""}{a.assignee_name ? ` · ${a.assignee_name}` : ""}</small></span><span className="status-pill">{a.status.replace("_", " ")}</span></div>)}</div>
+
+    <div className="section-heading task-heading"><div><p className="eyebrow">Knowledge base</p><h2>{articles.length}</h2></div></div>
+    <form className="task-composer workflow-composer" onSubmit={async (e) => { e.preventDefault(); if (await post("/itops/kb", kbForm, "Article published")) setKbForm({ title: "", body: "", category: "general" }); }}><input placeholder="Article title" value={kbForm.title} onChange={(e) => setKbForm({ ...kbForm, title: e.target.value })} required /><input placeholder="Body" value={kbForm.body} onChange={(e) => setKbForm({ ...kbForm, body: e.target.value })} /><button className="primary-button" type="submit">Publish</button></form>
+    <div className="record-list">{articles.map((a) => <div className="record-row" key={a.id}><span className="record-avatar department-avatar">KB</span><span className="record-copy"><strong>{a.title}</strong><small>{a.category}{a.author_name ? ` · ${a.author_name}` : ""}</small></span></div>)}</div>
+  </section>;
+}
+
+function FinanceExtras() {
+  const [invoices, setInvoices] = useState<Array<{ id: string; number: string; customer_name: string; amount: number; currency: string; status: string }>>([]);
+  const [budgets, setBudgets] = useState<Array<{ id: string; name: string; amount: number; currency: string; period_start: string; period_end: string; spent: number }>>([]);
+  const [purchases, setPurchases] = useState<Array<{ id: string; item: string; amount: number; currency: string; status: string; requester_name: string; approval_status: string }>>([]);
+  const [invoiceForm, setInvoiceForm] = useState({ number: "", customer_name: "", amount: "" });
+  const [budgetForm, setBudgetForm] = useState({ name: "", amount: "", period_start: "", period_end: "" });
+  const [prForm, setPrForm] = useState({ item: "", amount: "", justification: "" });
+  const [message, setMessage] = useState("");
+
+  const load = async () => {
+    const [inv, bud, pur] = await Promise.all([
+      fetch(`${apiBase}/invoices`, { credentials: "include" }),
+      fetch(`${apiBase}/budgets`, { credentials: "include" }),
+      fetch(`${apiBase}/purchase-requests`, { credentials: "include" }),
+    ]);
+    if (inv.ok) setInvoices(await inv.json());
+    if (bud.ok) setBudgets(await bud.json());
+    if (pur.ok) setPurchases(await pur.json());
+  };
+  useEffect(() => { void load(); }, []);
+
+  const post = async (url: string, body: unknown, ok: string) => {
+    const response = await fetch(`${apiBase}${url}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    setMessage(response.ok ? ok : ((await response.json()).error?.message ?? "Action failed"));
+    await load();
+    return response.ok;
+  };
+  const money = (amount: number, currency: string) => `${currency} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+
+  return <>
+    {message && <p className="inline-message">{message}</p>}
+    <div className="section-heading task-heading"><div><p className="eyebrow">Invoices</p><h2>{invoices.length}</h2></div></div>
+    <form className="task-composer workflow-composer" onSubmit={async (event) => { event.preventDefault(); if (await post("/invoices", { number: invoiceForm.number, customer_name: invoiceForm.customer_name, amount: Number(invoiceForm.amount) }, "Invoice created")) setInvoiceForm({ number: "", customer_name: "", amount: "" }); }}><input placeholder="Invoice #" value={invoiceForm.number} onChange={(e) => setInvoiceForm({ ...invoiceForm, number: e.target.value })} required /><input placeholder="Customer" value={invoiceForm.customer_name} onChange={(e) => setInvoiceForm({ ...invoiceForm, customer_name: e.target.value })} required /><input placeholder="Amount" inputMode="decimal" value={invoiceForm.amount} onChange={(e) => setInvoiceForm({ ...invoiceForm, amount: e.target.value.replace(/[^0-9.]/g, "") })} required /><button className="primary-button" type="submit">Add</button></form>
+    <div className="record-list">{invoices.map((inv) => <div className="record-row" key={inv.id}><span className="record-avatar department-avatar">#</span><span className="record-copy"><strong>{inv.number} · {money(inv.amount, inv.currency)}</strong><small>{inv.customer_name}</small></span><span className="status-pill">{inv.status}</span>{inv.status !== "paid" && <span className="record-actions"><button className="text-button" type="button" onClick={() => void post("/invoices/status", { id: inv.id, status: "paid" }, "Marked paid")}>Mark paid</button></span>}</div>)}</div>
+
+    <div className="section-heading task-heading"><div><p className="eyebrow">Purchase requests</p><h2>{purchases.length}</h2></div></div>
+    <form className="task-composer workflow-composer" onSubmit={async (event) => { event.preventDefault(); if (await post("/purchase-requests", { item: prForm.item, amount: Number(prForm.amount), justification: prForm.justification }, "Purchase request drafted")) setPrForm({ item: "", amount: "", justification: "" }); }}><input placeholder="Item" value={prForm.item} onChange={(e) => setPrForm({ ...prForm, item: e.target.value })} required /><input placeholder="Amount" inputMode="decimal" value={prForm.amount} onChange={(e) => setPrForm({ ...prForm, amount: e.target.value.replace(/[^0-9.]/g, "") })} required /><input placeholder="Justification" value={prForm.justification} onChange={(e) => setPrForm({ ...prForm, justification: e.target.value })} /><button className="primary-button" type="submit">Draft</button></form>
+    <div className="record-list">{purchases.map((pr) => <div className="record-row" key={pr.id}><span className="record-avatar"><Wallet size={15} /></span><span className="record-copy"><strong>{pr.item} · {money(pr.amount, pr.currency)}</strong><small>by {pr.requester_name}{pr.approval_status ? ` · approval: ${pr.approval_status.replace("_", " ")}` : ""}</small></span><span className="status-pill">{pr.status}</span>{pr.status === "draft" && <span className="record-actions"><button className="text-button" type="button" onClick={() => void post(`/purchase-requests/${pr.id}/submit`, {}, "Submitted for approval")}>Submit</button></span>}</div>)}</div>
+
+    <div className="section-heading task-heading"><div><p className="eyebrow">Budgets</p><h2>{budgets.length}</h2></div></div>
+    <form className="task-composer" onSubmit={async (event) => { event.preventDefault(); if (await post("/budgets", { name: budgetForm.name, amount: Number(budgetForm.amount), period_start: budgetForm.period_start, period_end: budgetForm.period_end }, "Budget created")) setBudgetForm({ name: "", amount: "", period_start: "", period_end: "" }); }}><input placeholder="Budget name" value={budgetForm.name} onChange={(e) => setBudgetForm({ ...budgetForm, name: e.target.value })} required /><input placeholder="Amount" inputMode="decimal" value={budgetForm.amount} onChange={(e) => setBudgetForm({ ...budgetForm, amount: e.target.value.replace(/[^0-9.]/g, "") })} required /><input type="date" value={budgetForm.period_start} onChange={(e) => setBudgetForm({ ...budgetForm, period_start: e.target.value })} required /><input type="date" value={budgetForm.period_end} onChange={(e) => setBudgetForm({ ...budgetForm, period_end: e.target.value })} required /><button className="primary-button" type="submit">Add</button></form>
+    <div className="record-list">{budgets.map((b) => <div className="record-row" key={b.id}><span className="record-avatar department-avatar">$</span><span className="record-copy"><strong>{b.name} · {money(b.amount, b.currency)}</strong><small>{b.period_start} → {b.period_end} · spent {money(b.spent, b.currency)}</small></span><span className={`status-pill ${b.spent > b.amount ? "leave-rejected" : ""}`}>{Math.round((b.spent / (b.amount || 1)) * 100)}%</span></div>)}</div>
+  </>;
 }
 
 function NotificationBell() {
