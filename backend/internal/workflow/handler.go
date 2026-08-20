@@ -67,6 +67,44 @@ type Instance struct {
 
 var errStepNotActionable = errors.New("step is not actionable by this user")
 
+// Start creates a workflow instance for an existing entity (e.g. an expense) and
+// routes it to the first applicable approval step. It is the reusable entry
+// point other modules call so approvals go through the one workflow engine.
+// Returns the new instance id.
+func Start(ctx context.Context, db *pgxpool.Pool, orgID, definitionID, title, entityType, entityID string, amount *float64, submitterID string) (string, error) {
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	if err := tx.QueryRow(ctx, `SELECT 1 FROM workflow_definitions WHERE id=$1 AND organization_id=$2 AND active=TRUE`, definitionID, orgID).Scan(new(int)); err != nil {
+		return "", err
+	}
+	var entityIDArg any
+	if entityID != "" {
+		entityIDArg = entityID
+	}
+	var instanceID string
+	if err := tx.QueryRow(ctx, `INSERT INTO workflow_instances (organization_id, definition_id, title, entity_type, entity_id, amount, submitted_by) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`, orgID, definitionID, title, entityType, entityIDArg, amount, submitterID).Scan(&instanceID); err != nil {
+		return "", err
+	}
+	if err := advance(ctx, tx, instanceID, definitionID, amount, 0, submitterID, "submit", ""); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return instanceID, nil
+}
+
+// FindDefinitionByEntity returns the id of the org's active workflow definition
+// for an entity type (e.g. "expense"), or "" if none is configured.
+func FindDefinitionByEntity(ctx context.Context, db *pgxpool.Pool, orgID, entityType string) string {
+	var id string
+	_ = db.QueryRow(ctx, `SELECT id FROM workflow_definitions WHERE organization_id=$1 AND entity_type=$2 AND active=TRUE ORDER BY created_at LIMIT 1`, orgID, entityType).Scan(&id)
+	return id
+}
+
 // Definitions lists every workflow definition with its ordered steps.
 func (h Handler) Definitions(w http.ResponseWriter, r *http.Request) {
 	user, err := h.Auth.Authenticate(r)

@@ -16,6 +16,7 @@ import (
 	"name/backend/internal/config"
 	"name/backend/internal/dashboard"
 	"name/backend/internal/database"
+	"name/backend/internal/finance"
 	"name/backend/internal/httpapi"
 	"name/backend/internal/leave"
 	"name/backend/internal/notifications"
@@ -152,6 +153,13 @@ func main() {
 	mux.Handle("GET /api/v1/files", authHandler.RequirePermission("organization.read", http.HandlerFunc(orgStructureHandler.Files)))
 	dashboardHandler := dashboard.Handler{DB: pool, Auth: authHandler}
 	mux.HandleFunc("GET /api/v1/dashboard/summary", dashboardHandler.Summary)
+	financeHandler := finance.Handler{DB: pool, Auth: authHandler}
+	mux.Handle("GET /api/v1/vendors", authHandler.RequirePermission("finance.read", http.HandlerFunc(financeHandler.Vendors)))
+	mux.Handle("POST /api/v1/vendors", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.Vendors)))
+	mux.Handle("GET /api/v1/expenses", authHandler.RequirePermission("finance.read", http.HandlerFunc(financeHandler.Expenses)))
+	mux.Handle("POST /api/v1/expenses", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.Expenses)))
+	mux.Handle("POST /api/v1/expenses/{id}/submit", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.Submit)))
+	mux.Handle("POST /api/v1/expenses/{id}/pay", authHandler.RequirePermission("finance.manage", http.HandlerFunc(financeHandler.MarkPaid)))
 	workflowHandler := workflow.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/workflow/definitions", authHandler.RequirePermission("workflow.read", http.HandlerFunc(workflowHandler.Definitions)))
 	mux.Handle("POST /api/v1/workflow/definitions", authHandler.RequirePermission("workflow.manage", http.HandlerFunc(workflowHandler.CreateDefinition)))

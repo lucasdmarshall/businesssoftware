@@ -16,6 +16,7 @@ import {
   Search,
   Sun,
   UsersRound,
+  Wallet,
 } from "lucide-react";
 import { cacheAttendance, cacheLeave, cacheSession, cacheShifts, cacheTasks, deleteLocalTask, discardOperation, getCachedSession, getLocalAttendance, getLocalLeave, getLocalShifts, getLocalTasks, getOutboxStatuses, initializeLocalDb, pullRemoteChanges, queueOperation, retryOperation, syncPendingOperations, type LocalAttendance, type LocalLeave, type LocalShift, type LocalTask } from "./localDb";
 
@@ -36,13 +37,15 @@ type WorkflowDefinition = { id: string; code: string; name: string; entity_type:
 type WorkflowActionEntry = { id: string; step_order: number | null; actor_name: string; action: string; reason: string; created_at: string };
 type WorkflowInstance = { id: string; definition_id: string; definition_name: string; title: string; entity_type: string; amount: number | null; status: string; current_step_order: number | null; current_step_name: string; submitted_by: string; submitter_name: string; created_at: string; updated_at: string; actions?: WorkflowActionEntry[] };
 
+type VendorItem = { id: string; name: string; contact_email: string; contact_phone: string; status: string };
+type ExpenseItem = { id: string; description: string; category: string; amount: number; currency: string; status: string; vendor_id: string; vendor_name: string; submitter_name: string; approval_status: string; created_at: string };
 type NotificationItem = { id: string; kind: string; title: string; body: string; entity_type: string; entity_id: string; read_at: string | null; created_at: string };
 type ProjectItem = { id: string; key: string; name: string; description: string; status: string; lead_id: string; lead_name: string; task_count: number; created_at: string };
 type CalendarEvent = { id: string; title: string; description: string; starts_at: string; ends_at: string; all_day: boolean; visibility: string; creator_name: string };
 
 const workflowStatusClass: Record<string, string> = { in_review: "leave-pending", approved: "leave-approved", rejected: "leave-rejected", cancelled: "leave-rejected", draft: "" };
 
-const viewForLabel = (label: string): string => label === "People" ? "people" : label === "Work" ? "work" : label === "Projects" ? "projects" : label === "Approvals" ? "approvals" : label === "Calendar" ? "calendar" : label === "Attendance" ? "attendance" : label === "Leave" ? "leave" : label === "Schedule" ? "schedule" : label === "Activity" ? "activity" : "overview";
+const viewForLabel = (label: string): string => label === "People" ? "people" : label === "Work" ? "work" : label === "Projects" ? "projects" : label === "Approvals" ? "approvals" : label === "Finance" ? "finance" : label === "Calendar" ? "calendar" : label === "Attendance" ? "attendance" : label === "Leave" ? "leave" : label === "Schedule" ? "schedule" : label === "Activity" ? "activity" : "overview";
 
 const apiBase = "http://localhost:8080/api/v1";
 
@@ -51,6 +54,7 @@ const navigation = [
   { label: "Work", icon: BriefcaseBusiness, permission: "tasks.read" },
   { label: "Projects", icon: FolderKanban, permission: "projects.read" },
   { label: "Approvals", icon: ClipboardCheck, permission: "workflow.read" },
+  { label: "Finance", icon: Wallet, permission: "finance.read" },
   { label: "Calendar", icon: CalendarDays, permission: "calendar.read" },
   { label: "Attendance", icon: Clock3, permission: "attendance.read" },
   { label: "Leave", icon: CalendarDays, permission: "leave.read" },
@@ -195,7 +199,7 @@ function App() {
           </div>
         </header>
 
-        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "projects" ? <ProjectsView /> : activeView === "approvals" ? <WorkflowView /> : activeView === "calendar" ? <CalendarView /> : activeView === "attendance" ? <AttendanceView /> : activeView === "leave" ? <LeaveView /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : <section className="content-wrap">
+        {activeView === "people" ? <PeopleView /> : activeView === "work" ? <WorkView /> : activeView === "projects" ? <ProjectsView /> : activeView === "approvals" ? <WorkflowView /> : activeView === "finance" ? <FinanceView /> : activeView === "calendar" ? <CalendarView /> : activeView === "attendance" ? <AttendanceView /> : activeView === "leave" ? <LeaveView /> : activeView === "schedule" ? <ScheduleView /> : activeView === "activity" ? <ActivityView /> : <section className="content-wrap">
           <div className="page-heading">
             <div>
               <p className="eyebrow">Wednesday, 20 August 2026</p>
@@ -456,6 +460,66 @@ function DashboardOverview() {
       <div className="record-list">{summary!.department_breakdown.map((row) => <div className="record-row" key={row.department}><span className="record-avatar department-avatar"><BriefcaseBusiness size={15} /></span><span className="record-copy"><strong>{row.department}</strong><small>{row.open_tasks} open {row.open_tasks === 1 ? "task" : "tasks"}</small></span><span className="status-pill">{row.open_tasks}</span></div>)}</div>
     </>}
   </>;
+}
+
+const expenseStatusClass: Record<string, string> = { approved: "leave-approved", rejected: "leave-rejected", in_review: "leave-pending", paid: "leave-approved", submitted: "leave-pending", draft: "" };
+
+function FinanceView() {
+  const [vendors, setVendors] = useState<VendorItem[]>([]);
+  const [expenses, setExpenses] = useState<ExpenseItem[]>([]);
+  const [expenseForm, setExpenseForm] = useState({ description: "", amount: "", category: "general", vendor_id: "" });
+  const [vendorForm, setVendorForm] = useState({ name: "", contact_email: "", contact_phone: "" });
+  const [showVendorForm, setShowVendorForm] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const load = async () => {
+    const [vendorsResponse, expensesResponse] = await Promise.all([
+      fetch(`${apiBase}/vendors`, { credentials: "include" }),
+      fetch(`${apiBase}/expenses`, { credentials: "include" }),
+    ]);
+    if (vendorsResponse.ok) setVendors(await vendorsResponse.json());
+    if (expensesResponse.ok) setExpenses(await expensesResponse.json());
+  };
+  useEffect(() => { void load(); }, []);
+
+  const createExpense = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const response = await fetch(`${apiBase}/expenses`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ description: expenseForm.description, amount: Number(expenseForm.amount), category: expenseForm.category, vendor_id: expenseForm.vendor_id }) });
+    setMessage(response.ok ? "Expense drafted" : ((await response.json()).error?.message ?? "Could not create expense"));
+    if (response.ok) { setExpenseForm({ description: "", amount: "", category: "general", vendor_id: "" }); await load(); }
+  };
+  const createVendor = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const response = await fetch(`${apiBase}/vendors`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(vendorForm) });
+    setMessage(response.ok ? "Vendor added" : ((await response.json()).error?.message ?? "Could not add vendor"));
+    if (response.ok) { setVendorForm({ name: "", contact_email: "", contact_phone: "" }); setShowVendorForm(false); await load(); }
+  };
+  const act = async (expenseId: string, action: "submit" | "pay") => {
+    const response = await fetch(`${apiBase}/expenses/${expenseId}/${action}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+    setMessage(response.ok ? (action === "submit" ? "Expense submitted for approval" : "Expense marked paid") : ((await response.json()).error?.message ?? "Action failed"));
+    await load();
+  };
+
+  const money = (item: ExpenseItem) => `${item.currency} ${item.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+
+  return <section className="content-wrap">
+    <div className="page-heading"><div><p className="eyebrow">Finance</p><h1>Expenses & vendors.</h1><p className="lede">Submit expenses for approval through the company workflow, then mark them paid.</p></div><button className="primary-button" type="button" onClick={() => setShowVendorForm((value) => !value)}>{showVendorForm ? "Close" : "Add vendor"}</button></div>
+    {message && <p className="inline-message">{message}</p>}
+
+    <form className="task-composer workflow-composer" onSubmit={createExpense}>
+      <input placeholder="What was the expense for?" value={expenseForm.description} onChange={(event) => setExpenseForm({ ...expenseForm, description: event.target.value })} required />
+      <input placeholder="Amount" inputMode="decimal" value={expenseForm.amount} onChange={(event) => setExpenseForm({ ...expenseForm, amount: event.target.value.replace(/[^0-9.]/g, "") })} required />
+      <select value={expenseForm.vendor_id} onChange={(event) => setExpenseForm({ ...expenseForm, vendor_id: event.target.value })}><option value="">No vendor</option>{vendors.map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.name}</option>)}</select>
+      <button className="primary-button" type="submit">Draft expense</button>
+    </form>
+
+    {showVendorForm && <form className="user-form" onSubmit={createVendor}><p className="eyebrow">New vendor</p><div className="form-grid"><input placeholder="Vendor name" value={vendorForm.name} onChange={(event) => setVendorForm({ ...vendorForm, name: event.target.value })} required /><input placeholder="Contact email" value={vendorForm.contact_email} onChange={(event) => setVendorForm({ ...vendorForm, contact_email: event.target.value })} /><input placeholder="Contact phone" value={vendorForm.contact_phone} onChange={(event) => setVendorForm({ ...vendorForm, contact_phone: event.target.value })} /></div><button className="primary-button" type="submit">Add vendor</button></form>}
+
+    <div className="section-heading task-heading"><div><p className="eyebrow">Expenses</p><h2>{expenses.length} records</h2></div></div>
+    <div className="record-list">{expenses.map((expense) => <div className="record-row" key={expense.id}><span className="record-avatar"><Wallet size={15} /></span><span className="record-copy"><strong>{expense.description} · {money(expense)}</strong><small>{expense.category}{expense.vendor_name ? ` · ${expense.vendor_name}` : ""} · by {expense.submitter_name}{expense.approval_status ? ` · approval: ${expense.approval_status.replace("_", " ")}` : ""}</small></span><span className={`status-pill ${expenseStatusClass[expense.approval_status || expense.status] ?? ""}`}>{expense.status}</span>{expense.status === "draft" && <span className="record-actions"><button className="text-button" type="button" onClick={() => void act(expense.id, "submit")}>Submit</button></span>}{expense.status === "submitted" && (expense.approval_status === "approved" || expense.approval_status === "") && <span className="record-actions"><button className="text-button" type="button" onClick={() => void act(expense.id, "pay")}>Mark paid</button></span>}</div>)}</div>
+
+    {vendors.length > 0 && <><div className="section-heading task-heading"><div><p className="eyebrow">Vendors</p><h2>{vendors.length}</h2></div></div><div className="record-list">{vendors.map((vendor) => <div className="record-row" key={vendor.id}><span className="record-avatar department-avatar">{vendor.name.slice(0, 2).toUpperCase()}</span><span className="record-copy"><strong>{vendor.name}</strong><small>{vendor.contact_email || "no email"}{vendor.contact_phone ? ` · ${vendor.contact_phone}` : ""}</small></span><span className="status-pill">{vendor.status}</span></div>)}</div></>}
+  </section>;
 }
 
 function NotificationBell() {
