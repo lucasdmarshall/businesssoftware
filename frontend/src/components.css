@@ -131,3 +131,34 @@
 .settings-locked-list { display: flex; flex-wrap: wrap; gap: 10px; }
 .settings-locked-item { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--line); border-radius: 9px; padding: 10px 14px; font-size: 12px; font-weight: 600; color: var(--muted); }
 .settings-locked-item small { font-size: 10px; color: var(--faint); font-weight: 500; }
+
+/* ---------- Date picker (popover calendar) ---------- */
+.datepicker { position: relative; width: 100%; }
+.datepicker .dp-icon { color: var(--muted); flex-shrink: 0; }
+.dp-pop { position: absolute; z-index: 50; top: calc(100% + 6px); left: 0; width: 268px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 16px 44px rgba(0,0,0,.18); padding: 12px; animation: dropdown-in .12s ease; }
+.dp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.dp-head strong { font-size: 13px; font-weight: 600; }
+.dp-head .cal-arrow { width: 28px; height: 28px; }
+.dp-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin-bottom: 4px; }
+.dp-weekdays span { text-align: center; font-size: 10px; font-weight: 700; color: var(--faint); padding: 4px 0; }
+.dp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.dp-day { border: 0; background: transparent; color: var(--text); border-radius: 7px; height: 32px; font-size: 12px; cursor: pointer; display: grid; place-items: center; }
+.dp-day:hover { background: var(--surface-soft); }
+.dp-day.outside { color: var(--faint); }
+.dp-day.today { box-shadow: inset 0 0 0 1px var(--accent); color: var(--accent); font-weight: 600; }
+.dp-day.sel { background: var(--accent); color: var(--surface); font-weight: 600; }
+.dp-day.sel:hover { background: var(--accent); }
+.dp-foot { display: flex; justify-content: flex-end; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.dp-clear { border: 0; background: transparent; color: var(--accent); font-size: 11px; font-weight: 600; cursor: pointer; }
+
+/* Width helpers for dropdowns placed in headers and record rows */
+.select-inline { width: 200px; flex-shrink: 0; }
+.select-row { width: 160px; flex-shrink: 0; margin-left: auto; }
+
+/* Inline forms (reports): let inputs and dropdowns share a wrapping row */
+.inline-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 18px; padding-bottom: 8px; }
+.inline-form > * { flex: 1 1 150px; min-width: 130px; }
+.inline-form input { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); padding: 10px 11px; font: inherit; font-size: 12px; outline: none; }
+.inline-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.inline-form .primary-button { flex: 0 0 auto; }
+.form-message { color: var(--accent); font-size: 12px; margin: 14px 0 0; }
