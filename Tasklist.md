@@ -130,6 +130,7 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Add shift list/create API
 - [x] Add offline shift cache and sync processor
 - [x] Add schedule UI
+- [x] Add shift status updates (confirm / complete / cancel)
 - [x] Add notifications foundation (platform notify service, API, bell UI, workflow emit)
 
 ### Attendance foundation
@@ -141,7 +142,7 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Add attendance screen with recent history
 - [x] Add manager attendance views
 - [x] Add attendance correction workflow
-- [ ] Add shifts, leave, corrections history, and payroll rules
+- [x] Add shifts, leave balances, corrections history, and payroll rules
 
 ## Phase 5 — Workflow Engine
 

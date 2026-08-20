@@ -45,13 +45,18 @@ local cache and outbox for device-offline mode.
 
 - Offline-capable: check-in and check-out capture.
 - Conflict rule: check-in and check-out for the same day apply to separate
-  columns so the two operations never clobber each other. Manager corrections
-  remain server-side.
+  columns so the two operations never clobber each other. Cross-device sync
+  merges on `(organization, user, work_date)` rather than inventing a second
+  day record. Manager corrections remain server-side and append to
+  `attendance_corrections` history.
 
 ### Leave and shifts
 
 - Offline-capable: submitting a request or a shift entry (queued).
 - Approvals and rejections are **not** offline actions (see below).
+- Leave balance updates happen only when the server approves a request.
+- Shift status changes (confirm / complete / cancel) are server-side.
+- Payroll rules and hour summaries are server-authoritative reads/writes.
 
 ## Server-authoritative actions (never offline)
 
@@ -59,6 +64,9 @@ These require the company server and are never applied from the local queue:
 
 - Permission and role changes
 - Final finance approvals and payroll confirmation
+- Payroll rule changes and hour summary computation
+- Leave balance entitlements and approval-driven balance deductions
+- Attendance corrections (and their history)
 - Leave and workflow **approval / rejection** decisions
 - User deletion, offboarding, and access revocation
 - MFA enable/disable and password changes

@@ -21,6 +21,7 @@ import (
 	"name/backend/internal/leave"
 	"name/backend/internal/notifications"
 	"name/backend/internal/orgstructure"
+	"name/backend/internal/payroll"
 	"name/backend/internal/projects"
 	"name/backend/internal/rbac"
 	"name/backend/internal/shifts"
@@ -114,6 +115,7 @@ func main() {
 	attendanceHandler := attendance.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/attendance", authHandler.RequirePermission("attendance.read", http.HandlerFunc(attendanceHandler.List)))
 	mux.Handle("GET /api/v1/attendance/organization", authHandler.RequirePermission("attendance.manage", http.HandlerFunc(attendanceHandler.ListOrganization)))
+	mux.Handle("GET /api/v1/attendance/corrections", authHandler.RequirePermission("attendance.manage", http.HandlerFunc(attendanceHandler.ListCorrections)))
 	mux.Handle("POST /api/v1/attendance/corrections", authHandler.RequirePermission("attendance.manage", http.HandlerFunc(attendanceHandler.Correct)))
 	mux.Handle("POST /api/v1/attendance/check-in", authHandler.RequirePermission("attendance.manage", http.HandlerFunc(attendanceHandler.Mutate)))
 	mux.Handle("POST /api/v1/attendance/check-out", authHandler.RequirePermission("attendance.manage", http.HandlerFunc(attendanceHandler.Mutate)))
@@ -122,9 +124,16 @@ func main() {
 	mux.Handle("POST /api/v1/leave", authHandler.RequirePermission("leave.read", http.HandlerFunc(leaveHandler.Create)))
 	mux.Handle("POST /api/v1/leave/approve", authHandler.RequirePermission("leave.manage", http.HandlerFunc(leaveHandler.Decide)))
 	mux.Handle("POST /api/v1/leave/reject", authHandler.RequirePermission("leave.manage", http.HandlerFunc(leaveHandler.Decide)))
+	mux.Handle("GET /api/v1/leave/balances", authHandler.RequirePermission("leave.read", http.HandlerFunc(leaveHandler.Balances)))
+	mux.Handle("POST /api/v1/leave/balances", authHandler.RequirePermission("leave.manage", http.HandlerFunc(leaveHandler.Balances)))
 	shiftHandler := shifts.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/shifts", authHandler.RequirePermission("shifts.read", http.HandlerFunc(shiftHandler.List)))
 	mux.Handle("POST /api/v1/shifts", authHandler.RequirePermission("shifts.manage", http.HandlerFunc(shiftHandler.Create)))
+	mux.Handle("PATCH /api/v1/shifts/{id}/status", authHandler.RequirePermission("shifts.manage", http.HandlerFunc(shiftHandler.UpdateStatus)))
+	payrollHandler := payroll.Handler{DB: pool, Auth: authHandler}
+	mux.Handle("GET /api/v1/payroll/rules", authHandler.RequirePermission("payroll.read", http.HandlerFunc(payrollHandler.Rules)))
+	mux.Handle("POST /api/v1/payroll/rules", authHandler.RequirePermission("payroll.manage", http.HandlerFunc(payrollHandler.Rules)))
+	mux.Handle("GET /api/v1/payroll/hours", authHandler.RequirePermission("payroll.read", http.HandlerFunc(payrollHandler.HoursSummary)))
 	rbacHandler := rbac.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/permissions", authHandler.RequirePermission("roles.manage", http.HandlerFunc(rbacHandler.Permissions)))
 	mux.Handle("GET /api/v1/roles", authHandler.RequirePermission("roles.manage", http.HandlerFunc(rbacHandler.Roles)))

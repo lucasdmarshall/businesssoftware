@@ -350,6 +350,7 @@ function AttendanceView() {
   const [records, setRecords] = useState<LocalAttendance[]>([]);
   const [managerRecords, setManagerRecords] = useState<Array<LocalAttendance & { display_name?: string }>>([]);
   const [users, setUsers] = useState<Array<{ id: string; display_name: string }>>([]);
+  const [corrections, setCorrections] = useState<Array<{ id: string; display_name?: string; corrector_name?: string; work_date: string; previous_status: string; status: string; note: string; created_at: string }>>([]);
   const [correction, setCorrection] = useState({ user_id: "", work_date: new Date().toISOString().slice(0, 10), check_in_at: "", check_out_at: "", status: "present", note: "" });
   const [message, setMessage] = useState("");
   const today = new Date().toISOString().slice(0, 10);
@@ -367,6 +368,8 @@ function AttendanceView() {
         setManagerRecords(await managerResponse.json());
         const usersResponse = await fetch(`${apiBase}/users`, { credentials: "include" });
         if (usersResponse.ok) setUsers(await usersResponse.json());
+        const correctionsResponse = await fetch(`${apiBase}/attendance/corrections`, { credentials: "include" });
+        if (correctionsResponse.ok) setCorrections(await correctionsResponse.json());
       }
     } catch { try { setRecords(await getLocalAttendance()); } catch { setRecords([]); } }
   };
@@ -393,29 +396,150 @@ function AttendanceView() {
     setMessage("Attendance corrected"); setCorrection((current) => ({ ...current, check_in_at: "", check_out_at: "", note: "" })); void load();
   };
 
-  return <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">Attendance</p><h1>Be present, clearly.</h1><p className="lede">Check-in and check-out remain available when the company server is offline.</p></div></div>{message && <p className="inline-message">{message}</p>}<div className="attendance-today"><div><p className="eyebrow">Today · {today}</p><h2>{todayRecord?.check_in_at ? todayRecord.check_out_at ? "Workday complete" : "Currently working" : "Not checked in"}</h2></div><div className="attendance-actions"><button className="primary-button" type="button" onClick={() => void mark("check_in")} disabled={Boolean(todayRecord?.check_in_at)}>Check in</button><button className="text-button" type="button" onClick={() => void mark("check_out")} disabled={!todayRecord?.check_in_at || Boolean(todayRecord.check_out_at)}>Check out</button></div></div><div className="section-heading task-heading"><div><p className="eyebrow">History</p><h2>Recent attendance</h2></div></div><div className="record-list">{records.map((record) => <div className="record-row" key={record.id}><span className="record-avatar"><Clock3 size={15} /></span><span className="record-copy"><strong>{record.work_date}</strong><small>{record.check_in_at ? new Date(record.check_in_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"} → {record.check_out_at ? new Date(record.check_out_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</small></span><span className="status-pill">{record.status}</span></div>)}</div>{managerRecords.length > 0 && <><div className="section-heading task-heading"><div><p className="eyebrow">Manager view</p><h2>Team attendance</h2></div></div><div className="record-list">{managerRecords.map((record) => <div className="record-row" key={record.id}><span className="record-avatar"><UsersRound size={15} /></span><span className="record-copy"><strong>{record.display_name}</strong><small>{record.work_date} · {record.check_in_at ? new Date(record.check_in_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"} → {record.check_out_at ? new Date(record.check_out_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</small></span><span className="status-pill">{record.status}</span></div>)}</div><form className="compact-form attendance-correction" onSubmit={submitCorrection}><p className="eyebrow">Correction</p><select value={correction.user_id} onChange={(event) => setCorrection({ ...correction, user_id: event.target.value })} required><option value="">Select person</option>{users.map((user) => <option value={user.id} key={user.id}>{user.display_name}</option>)}</select><input type="date" value={correction.work_date} onChange={(event) => setCorrection({ ...correction, work_date: event.target.value })} required /><div className="form-grid"><input type="time" value={correction.check_in_at} onChange={(event) => setCorrection({ ...correction, check_in_at: event.target.value })} /><input type="time" value={correction.check_out_at} onChange={(event) => setCorrection({ ...correction, check_out_at: event.target.value })} /><input placeholder="Reason or note" value={correction.note} onChange={(event) => setCorrection({ ...correction, note: event.target.value })} /></div><button className="primary-button" type="submit">Save correction</button></form></>}</section>;
+  return <section className="content-wrap">
+    <div className="page-heading"><div><p className="eyebrow">Attendance</p><h1>Be present, clearly.</h1><p className="lede">Check-in and check-out remain available when the company server is offline. Corrections keep a durable history.</p></div></div>
+    {message && <p className="inline-message">{message}</p>}
+    <div className="attendance-today"><div><p className="eyebrow">Today · {today}</p><h2>{todayRecord?.check_in_at ? todayRecord.check_out_at ? "Workday complete" : "Currently working" : "Not checked in"}</h2></div><div className="attendance-actions"><button className="primary-button" type="button" onClick={() => void mark("check_in")} disabled={Boolean(todayRecord?.check_in_at)}>Check in</button><button className="text-button" type="button" onClick={() => void mark("check_out")} disabled={!todayRecord?.check_in_at || Boolean(todayRecord.check_out_at)}>Check out</button></div></div>
+    <div className="section-heading task-heading"><div><p className="eyebrow">History</p><h2>Recent attendance</h2></div></div>
+    <div className="record-list">{records.map((record) => <div className="record-row" key={record.id}><span className="record-avatar"><Clock3 size={15} /></span><span className="record-copy"><strong>{record.work_date}</strong><small>{record.check_in_at ? new Date(record.check_in_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"} → {record.check_out_at ? new Date(record.check_out_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</small></span><span className="status-pill">{record.status}</span></div>)}</div>
+    {managerRecords.length > 0 && <>
+      <div className="section-heading task-heading"><div><p className="eyebrow">Manager view</p><h2>Team attendance</h2></div></div>
+      <div className="record-list">{managerRecords.map((record) => <div className="record-row" key={record.id}><span className="record-avatar"><UsersRound size={15} /></span><span className="record-copy"><strong>{record.display_name}</strong><small>{record.work_date} · {record.check_in_at ? new Date(record.check_in_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"} → {record.check_out_at ? new Date(record.check_out_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}</small></span><span className="status-pill">{record.status}</span></div>)}</div>
+      <form className="compact-form attendance-correction" onSubmit={submitCorrection}><p className="eyebrow">Correction</p><select value={correction.user_id} onChange={(event) => setCorrection({ ...correction, user_id: event.target.value })} required><option value="">Select person</option>{users.map((user) => <option value={user.id} key={user.id}>{user.display_name}</option>)}</select><input type="date" value={correction.work_date} onChange={(event) => setCorrection({ ...correction, work_date: event.target.value })} required /><div className="form-grid"><input type="time" value={correction.check_in_at} onChange={(event) => setCorrection({ ...correction, check_in_at: event.target.value })} /><input type="time" value={correction.check_out_at} onChange={(event) => setCorrection({ ...correction, check_out_at: event.target.value })} /><input placeholder="Reason or note" value={correction.note} onChange={(event) => setCorrection({ ...correction, note: event.target.value })} /></div><button className="primary-button" type="submit">Save correction</button></form>
+      <div className="section-heading task-heading"><div><p className="eyebrow">Corrections</p><h2>{corrections.length} history entries</h2></div></div>
+      <div className="record-list">{corrections.map((entry) => <div className="record-row" key={entry.id}><span className="record-avatar"><ClipboardCheck size={15} /></span><span className="record-copy"><strong>{entry.display_name} · {entry.work_date}</strong><small>{entry.previous_status || "—"} → {entry.status} · by {entry.corrector_name}{entry.note ? ` · ${entry.note}` : ""} · {new Date(entry.created_at).toLocaleString()}</small></span></div>)}</div>
+    </>}
+  </section>;
 }
+
 
 function LeaveView() {
   const [requests, setRequests] = useState<Array<LeaveRequest & LocalLeave>>([]);
+  const [balances, setBalances] = useState<Array<{ id: string; user_id: string; display_name?: string; leave_type: string; year: number; entitled_days: number; used_days: number; carried_over_days: number; remaining_days: number }>>([]);
+  const [users, setUsers] = useState<Array<{ id: string; display_name: string }>>([]);
   const [form, setForm] = useState({ leave_type: "annual", start_date: new Date().toISOString().slice(0, 10), end_date: new Date().toISOString().slice(0, 10), reason: "" });
+  const [balanceForm, setBalanceForm] = useState({ user_id: "", leave_type: "annual", entitled_days: "20", carried_over_days: "0" });
   const [message, setMessage] = useState("");
-  const load = async () => { try { await syncPendingOperations(apiBase); const response = await fetch(`${apiBase}/leave`, { credentials: "include" }); if (!response.ok) throw new Error("offline"); const remote = await response.json() as Array<LeaveRequest & LocalLeave>; setRequests(remote); await cacheLeave(remote); } catch { try { setRequests(await getLocalLeave() as Array<LeaveRequest & LocalLeave>); } catch { setRequests([]); } } };
+  const load = async () => {
+    try {
+      await syncPendingOperations(apiBase);
+      const response = await fetch(`${apiBase}/leave`, { credentials: "include" });
+      if (!response.ok) throw new Error("offline");
+      const remote = await response.json() as Array<LeaveRequest & LocalLeave>;
+      setRequests(remote); await cacheLeave(remote);
+      const balancesResponse = await fetch(`${apiBase}/leave/balances`, { credentials: "include" });
+      if (balancesResponse.ok) setBalances(await balancesResponse.json());
+      const usersResponse = await fetch(`${apiBase}/users`, { credentials: "include" });
+      if (usersResponse.ok) setUsers(await usersResponse.json());
+    } catch { try { setRequests(await getLocalLeave() as Array<LeaveRequest & LocalLeave>); } catch { setRequests([]); } }
+  };
   useEffect(() => { void load(); const onOnline = () => void load(); window.addEventListener("online", onOnline); return () => window.removeEventListener("online", onOnline); }, []);
-  const createRequest = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const now = new Date().toISOString(); const local: LocalLeave = { id: crypto.randomUUID(), requested_by: "local", leave_type: form.leave_type, start_date: form.start_date, end_date: form.end_date, reason: form.reason, status: "pending" }; try { const response = await fetch(`${apiBase}/leave`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) }); if (!response.ok) throw new Error("offline"); const saved = await response.json() as LeaveRequest & LocalLeave; setRequests((current) => [saved, ...current]); await cacheLeave([saved]); setMessage("Leave request submitted"); } catch { await queueOperation({ id: `leave:${local.id}`, entity: "leave", action: "create", payload: local, createdAt: now }); await cacheLeave([local]); setRequests((current) => [local, ...current]); setMessage("Saved offline · will sync when the server is reachable"); } setForm((current) => ({ ...current, reason: "" })); };
-  const decide = async (id: string, action: "approve" | "reject") => { const response = await fetch(`${apiBase}/leave/${action}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }); setMessage(response.ok ? `Request ${action}d` : "You do not have permission to decide this request"); if (response.ok) void load(); };
-  return <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">Leave</p><h1>Plan time away.</h1><p className="lede">Requests stay visible to the team and move through a clear approval path.</p></div></div>{message && <p className="inline-message">{message}</p>}<form className="leave-form" onSubmit={createRequest}><p className="eyebrow">New request</p><div className="form-grid"><select value={form.leave_type} onChange={(event) => setForm({ ...form, leave_type: event.target.value })}><option value="annual">Annual leave</option><option value="sick">Sick leave</option><option value="personal">Personal leave</option><option value="unpaid">Unpaid leave</option></select><input type="date" value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} required /><input type="date" value={form.end_date} onChange={(event) => setForm({ ...form, end_date: event.target.value })} required /></div><input placeholder="Reason (optional)" value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} /><button className="primary-button" type="submit">Submit request</button></form><div className="section-heading task-heading"><div><p className="eyebrow">Requests</p><h2>{requests.length} requests</h2></div></div><div className="record-list">{requests.map((request) => <div className="record-row" key={request.id}><span className="record-avatar"><CalendarDays size={15} /></span><span className="record-copy"><strong>{request.display_name ?? "My request"} · {request.leave_type}</strong><small>{request.start_date} → {request.end_date}{request.reason ? ` · ${request.reason}` : ""}</small></span><span className={`status-pill leave-${request.status}`}>{request.status}</span>{request.status === "pending" && <span className="task-actions"><button className="text-button" type="button" onClick={() => void decide(request.id, "approve")}>Approve</button><button className="text-button muted" type="button" onClick={() => void decide(request.id, "reject")}>Reject</button></span>}</div>)}</div></section>;
+  const createRequest = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const now = new Date().toISOString();
+    const local: LocalLeave = { id: crypto.randomUUID(), requested_by: "local", leave_type: form.leave_type, start_date: form.start_date, end_date: form.end_date, reason: form.reason, status: "pending" };
+    try {
+      const response = await fetch(`${apiBase}/leave`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+      if (!response.ok) throw new Error("offline");
+      const saved = await response.json() as LeaveRequest & LocalLeave;
+      setRequests((current) => [saved, ...current]); await cacheLeave([saved]); setMessage("Leave request submitted");
+    } catch {
+      await queueOperation({ id: `leave:${local.id}`, entity: "leave", action: "create", payload: local, createdAt: now });
+      await cacheLeave([local]); setRequests((current) => [local, ...current]); setMessage("Saved offline · will sync when the server is reachable");
+    }
+    setForm((current) => ({ ...current, reason: "" }));
+  };
+  const decide = async (id: string, action: "approve" | "reject") => {
+    const response = await fetch(`${apiBase}/leave/${action}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+    setMessage(response.ok ? `Request ${action}d` : "You do not have permission to decide this request");
+    if (response.ok) void load();
+  };
+  const saveBalance = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const response = await fetch(`${apiBase}/leave/balances`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: balanceForm.user_id, leave_type: balanceForm.leave_type, entitled_days: Number(balanceForm.entitled_days), carried_over_days: Number(balanceForm.carried_over_days) }),
+    });
+    setMessage(response.ok ? "Leave balance saved" : "Could not save leave balance");
+    if (response.ok) void load();
+  };
+  return <section className="content-wrap">
+    <div className="page-heading"><div><p className="eyebrow">Leave</p><h1>Plan time away.</h1><p className="lede">Requests stay visible to the team. Balances update when approvals land.</p></div></div>
+    {message && <p className="inline-message">{message}</p>}
+    <form className="leave-form" onSubmit={createRequest}><p className="eyebrow">New request</p><div className="form-grid"><select value={form.leave_type} onChange={(event) => setForm({ ...form, leave_type: event.target.value })}><option value="annual">Annual leave</option><option value="sick">Sick leave</option><option value="personal">Personal leave</option><option value="unpaid">Unpaid leave</option></select><input type="date" value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} required /><input type="date" value={form.end_date} onChange={(event) => setForm({ ...form, end_date: event.target.value })} required /></div><input placeholder="Reason (optional)" value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} /><button className="primary-button" type="submit">Submit request</button></form>
+    <div className="section-heading task-heading"><div><p className="eyebrow">Balances</p><h2>{balances.length} leave balances</h2></div></div>
+    <div className="record-list">{balances.map((balance) => <div className="record-row" key={balance.id}><span className="record-avatar"><CalendarDays size={15} /></span><span className="record-copy"><strong>{balance.display_name ?? "Me"} · {balance.leave_type}</strong><small>{balance.year} · {balance.remaining_days} remaining ({balance.used_days} used of {balance.entitled_days + balance.carried_over_days})</small></span></div>)}</div>
+    {users.length > 0 && <form className="compact-form" onSubmit={saveBalance}><p className="eyebrow">Set entitlement</p><div className="form-grid"><select value={balanceForm.user_id} onChange={(event) => setBalanceForm({ ...balanceForm, user_id: event.target.value })} required><option value="">Select person</option>{users.map((user) => <option key={user.id} value={user.id}>{user.display_name}</option>)}</select><select value={balanceForm.leave_type} onChange={(event) => setBalanceForm({ ...balanceForm, leave_type: event.target.value })}><option value="annual">Annual</option><option value="sick">Sick</option><option value="personal">Personal</option></select><input type="number" min="0" step="0.5" value={balanceForm.entitled_days} onChange={(event) => setBalanceForm({ ...balanceForm, entitled_days: event.target.value })} required /><input type="number" step="0.5" value={balanceForm.carried_over_days} onChange={(event) => setBalanceForm({ ...balanceForm, carried_over_days: event.target.value })} placeholder="Carry over" /></div><button className="primary-button" type="submit">Save balance</button></form>}
+    <div className="section-heading task-heading"><div><p className="eyebrow">Requests</p><h2>{requests.length} requests</h2></div></div>
+    <div className="record-list">{requests.map((request) => <div className="record-row" key={request.id}><span className="record-avatar"><CalendarDays size={15} /></span><span className="record-copy"><strong>{request.display_name ?? "My request"} · {request.leave_type}</strong><small>{request.start_date} → {request.end_date}{request.reason ? ` · ${request.reason}` : ""}</small></span><span className={`status-pill leave-${request.status}`}>{request.status}</span>{request.status === "pending" && <span className="task-actions"><button className="text-button" type="button" onClick={() => void decide(request.id, "approve")}>Approve</button><button className="text-button muted" type="button" onClick={() => void decide(request.id, "reject")}>Reject</button></span>}</div>)}</div>
+  </section>;
 }
+
 
 function ScheduleView() {
   const [shifts, setShifts] = useState<LocalShift[]>([]);
   const [form, setForm] = useState({ title: "", shift_date: new Date().toISOString().slice(0, 10), starts_at: "09:00", ends_at: "17:00", note: "" });
+  const [rule, setRule] = useState({ name: "Default", standard_hours_per_day: 8, overtime_after_hours: 8, overtime_multiplier: 1.5, weekend_multiplier: 2, currency: "USD" });
+  const [hourSummaries, setHourSummaries] = useState<Array<{ user_id: string; display_name: string; total_worked: number; total_overtime: number }>>([]);
   const [message, setMessage] = useState("");
-  const load = async () => { try { await syncPendingOperations(apiBase); const response = await fetch(`${apiBase}/shifts`, { credentials: "include" }); if (!response.ok) throw new Error("offline"); const remote = await response.json() as LocalShift[]; setShifts(remote); await cacheShifts(remote); } catch { try { setShifts(await getLocalShifts()); } catch { setShifts([]); } } };
+  const load = async () => {
+    try {
+      await syncPendingOperations(apiBase);
+      const response = await fetch(`${apiBase}/shifts`, { credentials: "include" });
+      if (!response.ok) throw new Error("offline");
+      const remote = await response.json() as LocalShift[];
+      setShifts(remote); await cacheShifts(remote);
+      const rulesResponse = await fetch(`${apiBase}/payroll/rules`, { credentials: "include" });
+      if (rulesResponse.ok) setRule(await rulesResponse.json());
+      const hoursResponse = await fetch(`${apiBase}/payroll/hours`, { credentials: "include" });
+      if (hoursResponse.ok) {
+        const payload = await hoursResponse.json() as { summaries: Array<{ user_id: string; display_name: string; total_worked: number; total_overtime: number }> };
+        setHourSummaries(payload.summaries ?? []);
+      }
+    } catch { try { setShifts(await getLocalShifts()); } catch { setShifts([]); } }
+  };
   useEffect(() => { void load(); const onOnline = () => void load(); window.addEventListener("online", onOnline); return () => window.removeEventListener("online", onOnline); }, []);
-  const createShift = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const now = new Date().toISOString(); const local: LocalShift = { id: crypto.randomUUID(), assigned_to: "local", ...form, status: "scheduled" }; try { const response = await fetch(`${apiBase}/shifts`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) }); if (!response.ok) throw new Error("offline"); const saved = await response.json() as LocalShift; setShifts((current) => [...current, saved]); await cacheShifts([saved]); setMessage("Shift scheduled"); } catch { await queueOperation({ id: `shift:${local.id}`, entity: "shift", action: "create", payload: local, createdAt: now }); await cacheShifts([local]); setShifts((current) => [...current, local]); setMessage("Saved offline · will sync when the server is reachable"); } setForm((current) => ({ ...current, title: "", note: "" })); };
-  return <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">Schedule</p><h1>Make time visible.</h1><p className="lede">Shifts stay available on this device and sync back to the company schedule.</p></div></div>{message && <p className="inline-message">{message}</p>}<form className="leave-form" onSubmit={createShift}><p className="eyebrow">New shift</p><div className="form-grid"><input placeholder="Shift title" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required /><input type="date" value={form.shift_date} onChange={(event) => setForm({ ...form, shift_date: event.target.value })} required /><input type="time" value={form.starts_at} onChange={(event) => setForm({ ...form, starts_at: event.target.value })} required /></div><div className="form-grid"><input type="time" value={form.ends_at} onChange={(event) => setForm({ ...form, ends_at: event.target.value })} required /><input placeholder="Note (optional)" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /><button className="primary-button" type="submit">Schedule shift</button></div></form><div className="section-heading task-heading"><div><p className="eyebrow">Upcoming</p><h2>{shifts.length} shifts</h2></div></div><div className="record-list">{shifts.map((shift) => <div className="record-row" key={shift.id}><span className="record-avatar"><CalendarDays size={15} /></span><span className="record-copy"><strong>{shift.title}</strong><small>{shift.shift_date} · {shift.starts_at.slice(0, 5)} → {shift.ends_at.slice(0, 5)}</small></span><span className="status-pill">{shift.status}</span></div>)}</div></section>;
+  const createShift = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const now = new Date().toISOString();
+    const local: LocalShift = { id: crypto.randomUUID(), assigned_to: "local", ...form, status: "scheduled" };
+    try {
+      const response = await fetch(`${apiBase}/shifts`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+      if (!response.ok) throw new Error("offline");
+      const saved = await response.json() as LocalShift;
+      setShifts((current) => [...current, saved]); await cacheShifts([saved]); setMessage("Shift scheduled");
+    } catch {
+      await queueOperation({ id: `shift:${local.id}`, entity: "shift", action: "create", payload: local, createdAt: now });
+      await cacheShifts([local]); setShifts((current) => [...current, local]); setMessage("Saved offline · will sync when the server is reachable");
+    }
+    setForm((current) => ({ ...current, title: "", note: "" }));
+  };
+  const updateStatus = async (id: string, status: string) => {
+    const response = await fetch(`${apiBase}/shifts/${id}/status`, { method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
+    if (!response.ok) { setMessage("Could not update shift status"); return; }
+    const saved = await response.json() as LocalShift;
+    setShifts((current) => current.map((shift) => shift.id === id ? { ...shift, ...saved } : shift));
+    setMessage(`Shift marked ${status}`);
+  };
+  const saveRule = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const response = await fetch(`${apiBase}/payroll/rules`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rule) });
+    setMessage(response.ok ? "Payroll rule saved" : "Could not save payroll rule");
+    if (response.ok) { setRule(await response.json()); void load(); }
+  };
+  return <section className="content-wrap">
+    <div className="page-heading"><div><p className="eyebrow">Schedule</p><h1>Make time visible.</h1><p className="lede">Shifts stay available on this device. Payroll rules turn attendance into regular and overtime hours.</p></div></div>
+    {message && <p className="inline-message">{message}</p>}
+    <form className="leave-form" onSubmit={createShift}><p className="eyebrow">New shift</p><div className="form-grid"><input placeholder="Shift title" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required /><input type="date" value={form.shift_date} onChange={(event) => setForm({ ...form, shift_date: event.target.value })} required /><input type="time" value={form.starts_at} onChange={(event) => setForm({ ...form, starts_at: event.target.value })} required /></div><div className="form-grid"><input type="time" value={form.ends_at} onChange={(event) => setForm({ ...form, ends_at: event.target.value })} required /><input placeholder="Note (optional)" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /><button className="primary-button" type="submit">Schedule shift</button></div></form>
+    <div className="section-heading task-heading"><div><p className="eyebrow">Upcoming</p><h2>{shifts.length} shifts</h2></div></div>
+    <div className="record-list">{shifts.map((shift) => <div className="record-row" key={shift.id}><span className="record-avatar"><CalendarDays size={15} /></span><span className="record-copy"><strong>{shift.title}</strong><small>{shift.shift_date} · {shift.starts_at.slice(0, 5)} → {shift.ends_at.slice(0, 5)}</small></span><span className="status-pill">{shift.status}</span><span className="task-actions"><button className="text-button" type="button" onClick={() => void updateStatus(shift.id, "confirmed")}>Confirm</button><button className="text-button muted" type="button" onClick={() => void updateStatus(shift.id, "completed")}>Complete</button><button className="text-button muted" type="button" onClick={() => void updateStatus(shift.id, "cancelled")}>Cancel</button></span></div>)}</div>
+    <div className="section-heading task-heading"><div><p className="eyebrow">Payroll</p><h2>Hour rules</h2></div></div>
+    <form className="compact-form" onSubmit={saveRule}><div className="form-grid"><input type="number" min="1" step="0.5" value={rule.standard_hours_per_day} onChange={(event) => setRule({ ...rule, standard_hours_per_day: Number(event.target.value) })} title="Standard hours" /><input type="number" min="1" step="0.5" value={rule.overtime_after_hours} onChange={(event) => setRule({ ...rule, overtime_after_hours: Number(event.target.value) })} title="Overtime after" /><input type="number" min="1" step="0.1" value={rule.overtime_multiplier} onChange={(event) => setRule({ ...rule, overtime_multiplier: Number(event.target.value) })} title="OT multiplier" /><input type="number" min="1" step="0.1" value={rule.weekend_multiplier} onChange={(event) => setRule({ ...rule, weekend_multiplier: Number(event.target.value) })} title="Weekend multiplier" /><input value={rule.currency} onChange={(event) => setRule({ ...rule, currency: event.target.value })} /></div><button className="primary-button" type="submit">Save payroll rule</button></form>
+    <div className="section-heading task-heading"><div><p className="eyebrow">Hours</p><h2>{hourSummaries.length} people</h2></div></div>
+    <div className="record-list">{hourSummaries.map((summary) => <div className="record-row" key={summary.user_id}><span className="record-avatar"><Clock3 size={15} /></span><span className="record-copy"><strong>{summary.display_name}</strong><small>{summary.total_worked}h worked · {summary.total_overtime}h overtime</small></span></div>)}</div>
+  </section>;
 }
+
 
 function ActivityView() {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
