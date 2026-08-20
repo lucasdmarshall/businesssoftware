@@ -144,6 +144,13 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Attendance production depth: hours, validation, today rollup, correction history, remote status
 - [x] Company check-in time policy (company-level only) + Early/Late auto-calc
 - [x] Attendance desk: name, position, employee ID, check-in / absent + expandable recent table
+
+### Schedule (third production-ready business module)
+
+- [x] Week view + mine/team scope filters
+- [x] Assign people (manage), overlap and approved-leave conflict checks
+- [x] Confirm / complete / cancel status flows + duration and week hours rollup
+- [x] Schedule UI with custom Dropdown / DatePicker / TimePicker
 - [ ] Add shifts depth and payroll rules
 
 ### Leave (first production-ready business module)

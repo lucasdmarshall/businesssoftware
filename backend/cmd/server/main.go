@@ -152,7 +152,10 @@ func main() {
 	mux.Handle("POST /api/v1/leave/policies", authHandler.RequirePermission("leave.manage", http.HandlerFunc(leaveHandler.Policies)))
 	shiftHandler := shifts.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/shifts", authHandler.RequirePermission("shifts.read", http.HandlerFunc(shiftHandler.List)))
-	mux.Handle("POST /api/v1/shifts", authHandler.RequirePermission("shifts.manage", http.HandlerFunc(shiftHandler.Create)))
+	mux.Handle("GET /api/v1/shifts/week", authHandler.RequirePermission("shifts.read", http.HandlerFunc(shiftHandler.Week)))
+	mux.Handle("POST /api/v1/shifts", authHandler.RequirePermission("shifts.read", http.HandlerFunc(shiftHandler.Create)))
+	mux.Handle("POST /api/v1/shifts/update", authHandler.RequirePermission("shifts.read", http.HandlerFunc(shiftHandler.Update)))
+	mux.Handle("POST /api/v1/shifts/status", authHandler.RequirePermission("shifts.read", http.HandlerFunc(shiftHandler.SetStatus)))
 	rbacHandler := rbac.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/permissions", authHandler.RequirePermission("roles.manage", http.HandlerFunc(rbacHandler.Permissions)))
 	mux.Handle("GET /api/v1/roles", authHandler.RequirePermission("roles.manage", http.HandlerFunc(rbacHandler.Roles)))
