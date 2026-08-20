@@ -142,6 +142,8 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Add manager attendance views
 - [x] Add attendance correction workflow
 - [x] Attendance production depth: hours, validation, today rollup, correction history, remote status
+- [x] Company check-in time policy (company-level only) + Early/Late auto-calc
+- [x] Attendance desk: name, position, employee ID, check-in / absent + expandable recent table
 - [ ] Add shifts depth and payroll rules
 
 ### Leave (first production-ready business module)

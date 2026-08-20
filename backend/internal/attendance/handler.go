@@ -1,9 +1,11 @@
 package attendance
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +31,26 @@ type Record struct {
 	Note        string     `json:"note"`
 	Hours       float64    `json:"hours"`
 	DisplayName string     `json:"display_name,omitempty"`
+	Position    string     `json:"position,omitempty"`
+	PositionID  string     `json:"position_id,omitempty"`
+	EmployeeID  string     `json:"employee_id,omitempty"`
+	EarlyBy     string     `json:"early_by,omitempty"`
+	LateBy      string     `json:"late_by,omitempty"`
+}
+
+type Person struct {
+	UserID       string `json:"user_id"`
+	DisplayName  string `json:"display_name"`
+	Email        string `json:"email"`
+	PositionID   string `json:"position_id"`
+	PositionName string `json:"position_name"`
+	EmployeeID   string `json:"employee_id"`
+}
+
+type Settings struct {
+	ExpectedCheckInTime string `json:"expected_check_in_time"`
+	CanEdit             bool   `json:"can_edit"`
+	UpdatedAt           string `json:"updated_at,omitempty"`
 }
 
 type Correction struct {
@@ -66,6 +88,34 @@ func withHours(item Record) Record {
 	return item
 }
 
+func (h Handler) expectedCheckIn(ctx context.Context, orgID string) time.Time {
+	var raw string
+	err := h.DB.QueryRow(ctx, `
+		SELECT to_char(expected_check_in_time, 'HH24:MI:SS')
+		FROM organization_attendance_settings WHERE organization_id=$1`, orgID).Scan(&raw)
+	if err != nil || raw == "" {
+		t, _ := ParseClock("09:00:00")
+		return t
+	}
+	t, err := ParseClock(raw)
+	if err != nil {
+		t, _ = ParseClock("09:00:00")
+	}
+	return t
+}
+
+func (h Handler) enrich(item Record, expected time.Time) Record {
+	item = withHours(item)
+	item.EarlyBy, item.LateBy = EarlyLate(item.CheckInAt, expected)
+	return item
+}
+
+func (h Handler) ensureSettings(ctx context.Context, orgID string) {
+	_, _ = h.DB.Exec(ctx, `
+		INSERT INTO organization_attendance_settings (organization_id, expected_check_in_time)
+		VALUES ($1, TIME '09:00:00') ON CONFLICT DO NOTHING`, orgID)
+}
+
 func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 	user, err := h.Auth.Authenticate(r)
 	if err != nil || h.DB == nil {
@@ -82,6 +132,7 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
+	expected := h.expectedCheckIn(r.Context(), user.OrganizationID)
 	items := make([]Record, 0)
 	for rows.Next() {
 		var item Record
@@ -89,7 +140,7 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 			httpapi.WriteError(w, http.StatusInternalServerError, "scan_failed", "could not read attendance")
 			return
 		}
-		items = append(items, withHours(item))
+		items = append(items, h.enrich(item, expected))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, items)
 }
@@ -100,9 +151,15 @@ func (h Handler) ListOrganization(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return
 	}
+	h.ensureSettings(r.Context(), user.OrganizationID)
+	expected := h.expectedCheckIn(r.Context(), user.OrganizationID)
 	query := `
-		SELECT a.id, a.user_id, u.display_name, a.work_date::text, a.check_in_at, a.check_out_at, a.status, a.note
-		FROM attendance_records a JOIN users u ON u.id=a.user_id
+		SELECT a.id, a.user_id, u.display_name, a.work_date::text, a.check_in_at, a.check_out_at, a.status, a.note,
+		       COALESCE(jt.id::text,''), COALESCE(jt.name,''), COALESCE(ep.employee_code,'')
+		FROM attendance_records a
+		JOIN users u ON u.id=a.user_id
+		LEFT JOIN job_titles jt ON jt.id=u.job_title_id
+		LEFT JOIN employee_profiles ep ON ep.user_id=u.id AND ep.organization_id=a.organization_id
 		WHERE a.organization_id=$1`
 	args := []any{user.OrganizationID}
 	argN := 2
@@ -124,8 +181,26 @@ func (h Handler) ListOrganization(w http.ResponseWriter, r *http.Request) {
 	if uid := strings.TrimSpace(r.URL.Query().Get("user_id")); uid != "" {
 		query += fmt.Sprintf(` AND a.user_id=$%d`, argN)
 		args = append(args, uid)
+		argN++
 	}
-	query += ` ORDER BY a.work_date DESC, u.display_name LIMIT 1000`
+	if pos := strings.TrimSpace(r.URL.Query().Get("position_id")); pos != "" {
+		query += fmt.Sprintf(` AND u.job_title_id=$%d`, argN)
+		args = append(args, pos)
+		argN++
+	}
+	limit := 1000
+	if strings.TrimSpace(r.URL.Query().Get("recent")) == "1" {
+		limit = 5
+	}
+	if n := strings.TrimSpace(r.URL.Query().Get("limit")); n != "" {
+		if parsed, err := strconv.Atoi(n); err == nil && parsed > 0 {
+			limit = parsed
+			if limit > 1000 {
+				limit = 1000
+			}
+		}
+	}
+	query += fmt.Sprintf(` ORDER BY COALESCE(a.check_in_at, a.updated_at) DESC, u.display_name LIMIT %d`, limit)
 
 	rows, err := h.DB.Query(r.Context(), query, args...)
 	if err != nil {
@@ -136,11 +211,12 @@ func (h Handler) ListOrganization(w http.ResponseWriter, r *http.Request) {
 	items := make([]Record, 0)
 	for rows.Next() {
 		var item Record
-		if err := rows.Scan(&item.ID, &item.UserID, &item.DisplayName, &item.WorkDate, &item.CheckInAt, &item.CheckOutAt, &item.Status, &item.Note); err != nil {
+		if err := rows.Scan(&item.ID, &item.UserID, &item.DisplayName, &item.WorkDate, &item.CheckInAt, &item.CheckOutAt, &item.Status, &item.Note,
+			&item.PositionID, &item.Position, &item.EmployeeID); err != nil {
 			httpapi.WriteError(w, http.StatusInternalServerError, "scan_failed", "could not read organization attendance")
 			return
 		}
-		items = append(items, withHours(item))
+		items = append(items, h.enrich(item, expected))
 	}
 	httpapi.WriteJSON(w, http.StatusOK, items)
 }
@@ -175,8 +251,99 @@ func (h Handler) Today(w http.ResponseWriter, r *http.Request) {
 	httpapi.WriteJSON(w, http.StatusOK, summary)
 }
 
+func (h Handler) Settings(w http.ResponseWriter, r *http.Request) {
+	user, err := h.Auth.Authenticate(r)
+	if err != nil || h.DB == nil {
+		httpapi.WriteError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return
+	}
+	h.ensureSettings(r.Context(), user.OrganizationID)
+	canEdit := h.Auth.HasPermission(r.Context(), user, "organization.manage")
+	if r.Method == http.MethodGet {
+		var clock, updated string
+		_ = h.DB.QueryRow(r.Context(), `
+			SELECT to_char(expected_check_in_time, 'HH24:MI:SS'), COALESCE(to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),'')
+			FROM organization_attendance_settings WHERE organization_id=$1`, user.OrganizationID,
+		).Scan(&clock, &updated)
+		if clock == "" {
+			clock = "09:00:00"
+		}
+		httpapi.WriteJSON(w, http.StatusOK, Settings{ExpectedCheckInTime: clock, CanEdit: canEdit, UpdatedAt: updated})
+		return
+	}
+	if r.Method != http.MethodPost && r.Method != http.MethodPut {
+		httpapi.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET or POST required")
+		return
+	}
+	if !canEdit {
+		httpapi.WriteError(w, http.StatusForbidden, "forbidden", "only company-level access (organization.manage) can change the company check-in time — department heads cannot")
+		return
+	}
+	var input struct {
+		ExpectedCheckInTime string `json:"expected_check_in_time"`
+	}
+	if json.NewDecoder(r.Body).Decode(&input) != nil {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "expected_check_in_time is required")
+		return
+	}
+	clock := strings.TrimSpace(input.ExpectedCheckInTime)
+	if _, err := ParseClock(clock); err != nil {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_time", "expected_check_in_time must be HH:MM or HH:MM:SS")
+		return
+	}
+	if len(clock) == 5 {
+		clock += ":00"
+	}
+	_, err = h.DB.Exec(r.Context(), `
+		INSERT INTO organization_attendance_settings (organization_id, expected_check_in_time, updated_by, updated_at)
+		VALUES ($1, $2::time, $3, NOW())
+		ON CONFLICT (organization_id) DO UPDATE SET
+			expected_check_in_time=EXCLUDED.expected_check_in_time,
+			updated_by=EXCLUDED.updated_by,
+			updated_at=NOW()`,
+		user.OrganizationID, clock, user.ID)
+	if err != nil {
+		httpapi.WriteError(w, http.StatusBadRequest, "save_failed", "could not save company check-in time")
+		return
+	}
+	_, _ = h.DB.Exec(r.Context(), `INSERT INTO audit_logs (organization_id, actor_id, action, entity_type, entity_id, metadata) VALUES ($1,$2,'attendance.company_check_in_updated','organization',$1,$3)`,
+		user.OrganizationID, user.ID, map[string]any{"expected_check_in_time": clock})
+	httpapi.WriteJSON(w, http.StatusOK, Settings{ExpectedCheckInTime: clock, CanEdit: true})
+}
+
+func (h Handler) People(w http.ResponseWriter, r *http.Request) {
+	user, err := h.Auth.Authenticate(r)
+	if err != nil || h.DB == nil {
+		httpapi.WriteError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return
+	}
+	rows, err := h.DB.Query(r.Context(), `
+		SELECT u.id, u.display_name, u.email, COALESCE(jt.id::text,''), COALESCE(jt.name,''), COALESCE(ep.employee_code,'')
+		FROM users u
+		LEFT JOIN job_titles jt ON jt.id=u.job_title_id
+		LEFT JOIN employee_profiles ep ON ep.user_id=u.id AND ep.organization_id=u.organization_id
+		WHERE u.organization_id=$1 AND u.status='active'
+		ORDER BY u.display_name`, user.OrganizationID)
+	if err != nil {
+		httpapi.WriteError(w, http.StatusInternalServerError, "query_failed", "could not load people")
+		return
+	}
+	defer rows.Close()
+	items := make([]Person, 0)
+	for rows.Next() {
+		var item Person
+		if err := rows.Scan(&item.UserID, &item.DisplayName, &item.Email, &item.PositionID, &item.PositionName, &item.EmployeeID); err != nil {
+			httpapi.WriteError(w, http.StatusInternalServerError, "scan_failed", "could not read people")
+			return
+		}
+		items = append(items, item)
+	}
+	httpapi.WriteJSON(w, http.StatusOK, items)
+}
+
 type mutation struct {
 	ID       string     `json:"id"`
+	UserID   string     `json:"user_id"`
 	WorkDate string     `json:"work_date"`
 	At       *time.Time `json:"at"`
 	Note     string     `json:"note"`
@@ -203,12 +370,20 @@ func (h Handler) Mutate(w http.ResponseWriter, r *http.Request) {
 		input.At = &now
 	}
 	isCheckOut := strings.HasSuffix(r.URL.Path, "/check-out")
+	targetUser := user.ID
+	if input.UserID != "" && input.UserID != user.ID {
+		if !h.Auth.HasPermission(r.Context(), user, "attendance.manage") {
+			httpapi.WriteError(w, http.StatusForbidden, "forbidden", "attendance.manage required to check in others")
+			return
+		}
+		targetUser = input.UserID
+	}
 
 	var existing Record
 	_ = h.DB.QueryRow(r.Context(), `
 		SELECT id, user_id, work_date::text, check_in_at, check_out_at, status, note
 		FROM attendance_records WHERE organization_id=$1 AND user_id=$2 AND work_date=$3`,
-		user.OrganizationID, user.ID, workDate,
+		user.OrganizationID, targetUser, workDate,
 	).Scan(&existing.ID, &existing.UserID, &existing.WorkDate, &existing.CheckInAt, &existing.CheckOutAt, &existing.Status, &existing.Note)
 
 	if existing.Status == "leave" {
@@ -251,7 +426,7 @@ func (h Handler) Mutate(w http.ResponseWriter, r *http.Request) {
 			UPDATE attendance_records SET check_out_at=$1, note=CASE WHEN $2='' THEN note ELSE $2 END, updated_at=NOW()
 			WHERE organization_id=$3 AND user_id=$4 AND work_date=$5
 			RETURNING id, user_id, work_date::text, check_in_at, check_out_at, status, note`,
-			input.At, input.Note, user.OrganizationID, user.ID, workDate,
+			input.At, input.Note, user.OrganizationID, targetUser, workDate,
 		).Scan(&item.ID, &item.UserID, &item.WorkDate, &item.CheckInAt, &item.CheckOutAt, &item.Status, &item.Note)
 	} else {
 		err = h.DB.QueryRow(r.Context(), `
@@ -263,7 +438,7 @@ func (h Handler) Mutate(w http.ResponseWriter, r *http.Request) {
 				note=EXCLUDED.note,
 				updated_at=NOW()
 			RETURNING id, user_id, work_date::text, check_in_at, check_out_at, status, note`,
-			input.ID, user.OrganizationID, user.ID, workDate, input.At, status, input.Note,
+			input.ID, user.OrganizationID, targetUser, workDate, input.At, status, input.Note,
 		).Scan(&item.ID, &item.UserID, &item.WorkDate, &item.CheckInAt, &item.CheckOutAt, &item.Status, &item.Note)
 	}
 	if err != nil {
@@ -276,8 +451,13 @@ func (h Handler) Mutate(w http.ResponseWriter, r *http.Request) {
 		action = "attendance.check_out"
 	}
 	_, _ = h.DB.Exec(r.Context(), `INSERT INTO audit_logs (organization_id, actor_id, action, entity_type, entity_id, metadata) VALUES ($1,$2,$3,'attendance',$4,$5)`,
-		user.OrganizationID, user.ID, action, item.ID, map[string]any{"work_date": item.WorkDate, "hours": HoursWorked(item.CheckInAt, item.CheckOutAt)})
-	httpapi.WriteJSON(w, http.StatusOK, withHours(item))
+		user.OrganizationID, user.ID, action, item.ID, map[string]any{"work_date": item.WorkDate, "hours": HoursWorked(item.CheckInAt, item.CheckOutAt), "user_id": targetUser})
+	if targetUser != user.ID {
+		_ = notify.Emit(r.Context(), h.DB, user.OrganizationID, targetUser, "attendance.check_in", "Checked in",
+			fmt.Sprintf("You were checked in for %s.", item.WorkDate), "attendance", item.ID)
+	}
+	expected := h.expectedCheckIn(r.Context(), user.OrganizationID)
+	httpapi.WriteJSON(w, http.StatusOK, h.enrich(item, expected))
 }
 
 // SetStatus lets a person mark today as remote (or a manager mark absent/leave/present).

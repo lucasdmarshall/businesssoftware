@@ -26,6 +26,7 @@ type Profile struct {
 	EmergencyContact string `json:"emergency_contact"`
 	Bio              string `json:"bio"`
 	JobTitle         string `json:"job_title"`
+	EmployeeCode     string `json:"employee_code"`
 }
 
 // Profiles lists employee profiles joined with the user directory.
@@ -37,7 +38,7 @@ func (h Handler) Profiles(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := h.DB.Query(r.Context(), `
 		SELECT u.id, u.display_name, u.email, COALESCE(p.phone,''), COALESCE(p.hire_date::text,''),
-		       COALESCE(p.employment_type,'full_time'), COALESCE(p.emergency_contact,''), COALESCE(p.bio,''), COALESCE(jt.name,'')
+		       COALESCE(p.employment_type,'full_time'), COALESCE(p.emergency_contact,''), COALESCE(p.bio,''), COALESCE(jt.name,''), COALESCE(p.employee_code,'')
 		FROM users u
 		LEFT JOIN employee_profiles p ON p.user_id=u.id
 		LEFT JOIN job_titles jt ON jt.id=u.job_title_id
@@ -50,7 +51,7 @@ func (h Handler) Profiles(w http.ResponseWriter, r *http.Request) {
 	items := make([]Profile, 0)
 	for rows.Next() {
 		var item Profile
-		if err := rows.Scan(&item.UserID, &item.DisplayName, &item.Email, &item.Phone, &item.HireDate, &item.EmploymentType, &item.EmergencyContact, &item.Bio, &item.JobTitle); err != nil {
+		if err := rows.Scan(&item.UserID, &item.DisplayName, &item.Email, &item.Phone, &item.HireDate, &item.EmploymentType, &item.EmergencyContact, &item.Bio, &item.JobTitle, &item.EmployeeCode); err != nil {
 			httpapi.WriteError(w, http.StatusInternalServerError, "scan_failed", "could not read profiles")
 			return
 		}
@@ -73,6 +74,7 @@ func (h Handler) UpsertProfile(w http.ResponseWriter, r *http.Request) {
 		EmploymentType   string `json:"employment_type"`
 		EmergencyContact string `json:"emergency_contact"`
 		Bio              string `json:"bio"`
+		EmployeeCode     string `json:"employee_code"`
 	}
 	if json.NewDecoder(r.Body).Decode(&input) != nil || input.UserID == "" {
 		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "user_id is required")
@@ -86,10 +88,10 @@ func (h Handler) UpsertProfile(w http.ResponseWriter, r *http.Request) {
 		hireDate = input.HireDate
 	}
 	result, err := h.DB.Exec(r.Context(), `
-		INSERT INTO employee_profiles (user_id, organization_id, phone, hire_date, employment_type, emergency_contact, bio)
-		SELECT u.id, u.organization_id, $2, $3, $4, $5, $6 FROM users u WHERE u.id=$1 AND u.organization_id=$7
-		ON CONFLICT (user_id) DO UPDATE SET phone=EXCLUDED.phone, hire_date=EXCLUDED.hire_date, employment_type=EXCLUDED.employment_type, emergency_contact=EXCLUDED.emergency_contact, bio=EXCLUDED.bio, updated_at=NOW()`,
-		input.UserID, strings.TrimSpace(input.Phone), hireDate, input.EmploymentType, strings.TrimSpace(input.EmergencyContact), strings.TrimSpace(input.Bio), user.OrganizationID)
+		INSERT INTO employee_profiles (user_id, organization_id, phone, hire_date, employment_type, emergency_contact, bio, employee_code)
+		SELECT u.id, u.organization_id, $2, $3, $4, $5, $6, $7 FROM users u WHERE u.id=$1 AND u.organization_id=$8
+		ON CONFLICT (user_id) DO UPDATE SET phone=EXCLUDED.phone, hire_date=EXCLUDED.hire_date, employment_type=EXCLUDED.employment_type, emergency_contact=EXCLUDED.emergency_contact, bio=EXCLUDED.bio, employee_code=EXCLUDED.employee_code, updated_at=NOW()`,
+		input.UserID, strings.TrimSpace(input.Phone), hireDate, input.EmploymentType, strings.TrimSpace(input.EmergencyContact), strings.TrimSpace(input.Bio), strings.TrimSpace(input.EmployeeCode), user.OrganizationID)
 	if err != nil || result.RowsAffected() == 0 {
 		httpapi.WriteError(w, http.StatusBadRequest, "invalid_user", "user does not belong to this organization")
 		return

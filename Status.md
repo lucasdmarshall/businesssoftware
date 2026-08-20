@@ -168,6 +168,7 @@ Completed in this milestone:
 - **Leave chosen as first production-depth module:** balances, policies, half-days, overlap checks, cancel flows, attendance + calendar side effects on approve, optional `leave` workflow routing, and a rebuilt Leave UI (migration `027_leave_production.sql`)
 - Design system now documents required custom **Dropdown / DatePicker / TimePicker** controls in `Design.md` and `Language-and-Design-System.md`
 - **Attendance chosen as second production-depth module:** worked hours, check-in/out validation, leave-day block, remote status, manager today rollup + date filter, durable correction history with notifications (migration `028_attendance_production.sql`)
+- **Attendance desk + company check-in policy:** company-level expected check-in time (`organization.manage` only — not department heads); manager Name/Position/Employee ID desk with Check in / Absent; recent table (5 rows default) with Early by / Late by auto-calc `hh:mm:ss` (migration `029_attendance_company_policy.sql`)
 
 Next actions:
 
