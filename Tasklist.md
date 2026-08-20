@@ -91,6 +91,9 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Add People management screen
 - [x] Add user creation form
 - [x] Add department creation form
+- [x] Core department catalog (seed + rename/archive)
+- [x] Username login + company credential generator module
+- [x] Logout control + post-login department home
 - [x] Implement data scopes: own, department, organization foundation
 - [x] Add user-department membership model and assignment endpoint
 - [x] Add task scope selector in Work UI

@@ -28,7 +28,8 @@ type SessionUser struct {
 }
 
 type Handler struct {
-	DB *pgxpool.Pool
+	DB                    *pgxpool.Pool
+	OnOrganizationCreated func(ctx context.Context, organizationID string)
 }
 
 type setupStatusResponse struct {
@@ -40,23 +41,27 @@ type setupRequest struct {
 	OrganizationSlug string `json:"organization_slug"`
 	Name             string `json:"name"`
 	Email            string `json:"email"`
+	Username         string `json:"username"`
 	Password         string `json:"password"`
 }
 
 type loginRequest struct {
+	Username string `json:"username"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
 	Code     string `json:"code"`
 }
 
 type userResponse struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	Email          string   `json:"email"`
-	OrganizationID string   `json:"organization_id"`
-	Organization   string   `json:"organization"`
-	Role           string   `json:"role"`
-	Permissions    []string `json:"permissions"`
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Email            string   `json:"email"`
+	Username         string   `json:"username"`
+	OrganizationID   string   `json:"organization_id"`
+	Organization     string   `json:"organization"`
+	Role             string   `json:"role"`
+	Permissions      []string `json:"permissions"`
+	HomeDepartmentID string   `json:"home_department_id"`
 }
 
 func (h Handler) SetupStatus(w http.ResponseWriter, r *http.Request) {
@@ -106,7 +111,11 @@ func (h Handler) Setup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "organization slug may already exist"})
 		return
 	}
-	if err := tx.QueryRow(r.Context(), `INSERT INTO users (organization_id, email, display_name, password_hash) VALUES ($1, lower($2), $3, $4) RETURNING id`, organizationID, strings.TrimSpace(input.Email), strings.TrimSpace(input.Name), passwordHash).Scan(&userID); err != nil {
+	username := strings.TrimSpace(strings.ToLower(input.Username))
+	if username == "" {
+		username = strings.Split(strings.ToLower(strings.TrimSpace(input.Email)), "@")[0]
+	}
+	if err := tx.QueryRow(r.Context(), `INSERT INTO users (organization_id, email, username, display_name, password_hash) VALUES ($1, lower($2), lower($3), $4, $5) RETURNING id`, organizationID, strings.TrimSpace(input.Email), username, strings.TrimSpace(input.Name), passwordHash).Scan(&userID); err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "could not create owner account"})
 		return
 	}
@@ -126,8 +135,12 @@ func (h Handler) Setup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not complete setup"})
 		return
 	}
-	_, _ = h.DB.Exec(r.Context(), `INSERT INTO audit_logs (organization_id, actor_id, action, entity_type, entity_id, metadata) VALUES ($1,$2,'organization.setup','organization',$1,$3)`, organizationID, userID, map[string]any{"email": input.Email})
-	writeJSON(w, http.StatusCreated, map[string]string{"organization_id": organizationID, "user_id": userID})
+	// Seed core departments after commit so position seeding can use the pool.
+	if h.OnOrganizationCreated != nil {
+		h.OnOrganizationCreated(r.Context(), organizationID)
+	}
+	_, _ = h.DB.Exec(r.Context(), `INSERT INTO audit_logs (organization_id, actor_id, action, entity_type, entity_id, metadata) VALUES ($1,$2,'organization.setup','organization',$1,$3)`, organizationID, userID, map[string]any{"email": input.Email, "username": username})
+	writeJSON(w, http.StatusCreated, map[string]string{"organization_id": organizationID, "user_id": userID, "username": username})
 }
 
 func (h Handler) Login(w http.ResponseWriter, r *http.Request) {
@@ -140,9 +153,20 @@ func (h Handler) Login(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid login request"})
 		return
 	}
+	loginID := strings.TrimSpace(strings.ToLower(input.Username))
+	if loginID == "" {
+		loginID = strings.TrimSpace(strings.ToLower(input.Email))
+	}
+	if loginID == "" || input.Password == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
+		return
+	}
 	var userID, organizationID, passwordHash string
-	if err := h.DB.QueryRow(r.Context(), `SELECT id, organization_id, password_hash FROM users WHERE email = lower($1) AND status = 'active'`, strings.TrimSpace(input.Email)).Scan(&userID, &organizationID, &passwordHash); err != nil || passwordHash == "" || !VerifyPassword(input.Password, passwordHash) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid email or password"})
+	if err := h.DB.QueryRow(r.Context(), `
+		SELECT id, organization_id, password_hash FROM users
+		WHERE status = 'active' AND (lower(COALESCE(username,'')) = $1 OR email = $1)`,
+		loginID).Scan(&userID, &organizationID, &passwordHash); err != nil || passwordHash == "" || !VerifyPassword(input.Password, passwordHash) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
 		return
 	}
 
@@ -266,7 +290,7 @@ func (h Handler) Me(w http.ResponseWriter, r *http.Request) {
 	tokenHash := hex.EncodeToString(hash[:])
 	var response userResponse
 	err = h.DB.QueryRow(r.Context(), `
-		SELECT u.id, u.display_name, u.email, u.organization_id, o.name, COALESCE(MIN(r.name), 'Member'),
+		SELECT u.id, u.display_name, u.email, COALESCE(u.username,''), u.organization_id, o.name, COALESCE(MIN(r.name), 'Member'),
 			COALESCE(array_agg(DISTINCT rp.permission_code) FILTER (WHERE rp.permission_code IS NOT NULL), '{}')
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
@@ -275,7 +299,7 @@ func (h Handler) Me(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN roles r ON r.id = ur.role_id
 		LEFT JOIN role_permissions rp ON rp.role_id = r.id
 		WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > NOW()
-		GROUP BY u.id, u.display_name, u.email, u.organization_id, o.name`, tokenHash).Scan(&response.ID, &response.Name, &response.Email, &response.OrganizationID, &response.Organization, &response.Role, &response.Permissions)
+		GROUP BY u.id, u.display_name, u.email, u.username, u.organization_id, o.name`, tokenHash).Scan(&response.ID, &response.Name, &response.Email, &response.Username, &response.OrganizationID, &response.Organization, &response.Role, &response.Permissions)
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "session expired"})
 		return
@@ -283,6 +307,26 @@ func (h Handler) Me(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load current user"})
 		return
+	}
+	var memberCount int
+	_ = h.DB.QueryRow(r.Context(), `
+		SELECT COUNT(*) FROM user_departments ud
+		JOIN departments d ON d.id=ud.department_id
+		WHERE ud.user_id=$1 AND d.archived_at IS NULL`, response.ID).Scan(&memberCount)
+	if memberCount == 1 {
+		_ = h.DB.QueryRow(r.Context(), `
+			SELECT ud.department_id::text FROM user_departments ud
+			JOIN departments d ON d.id=ud.department_id
+			WHERE ud.user_id=$1 AND d.archived_at IS NULL LIMIT 1`, response.ID).Scan(&response.HomeDepartmentID)
+	} else if memberCount > 1 {
+		_ = h.DB.QueryRow(r.Context(), `
+			SELECT COALESCE(ud.department_id::text,'') FROM user_departments ud
+			JOIN departments d ON d.id=ud.department_id
+			WHERE ud.user_id=$1 AND ud.is_primary AND d.archived_at IS NULL
+			ORDER BY d.name LIMIT 1`, response.ID).Scan(&response.HomeDepartmentID)
+		if response.HomeDepartmentID == "" {
+			_ = h.DB.QueryRow(r.Context(), `SELECT COALESCE(primary_department_id::text,'') FROM users WHERE id=$1`, response.ID).Scan(&response.HomeDepartmentID)
+		}
 	}
 	writeJSON(w, http.StatusOK, response)
 }

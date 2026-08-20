@@ -19,7 +19,7 @@ import (
 // Module codes match the department workspace nav.
 var AllModules = []string{
 	"overview", "users", "access", "positions", "attendance", "calendar", "leave",
-	"schedule", "salary", "bonus", "finance", "tasks", "activity", "settings",
+	"schedule", "salary", "bonus", "finance", "credentials", "tasks", "activity", "settings",
 }
 
 type Handler struct {
@@ -32,6 +32,7 @@ type DepartmentWorkspace struct {
 	Name         string        `json:"name"`
 	Slug         string        `json:"slug"`
 	IsHead       bool          `json:"is_head"`
+	IsPrimary    bool          `json:"is_primary"`
 	PositionCode string        `json:"position_code"`
 	PositionName string        `json:"position_name"`
 	CompanyWide  bool          `json:"company_wide"`
@@ -115,6 +116,7 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wide := h.companyWide(r.Context(), user)
+	_ = SeedCoreDepartments(r.Context(), h.DB, user.OrganizationID)
 	var rows interface {
 		Next() bool
 		Scan(dest ...any) error
@@ -123,11 +125,11 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	if wide {
 		q, err := h.DB.Query(r.Context(), `
-			SELECT d.id, d.name, d.slug, COALESCE(ud.is_head, FALSE), COALESCE(p.code,''), COALESCE(p.name,'')
+			SELECT d.id, d.name, d.slug, COALESCE(ud.is_head, FALSE), COALESCE(ud.is_primary, FALSE), COALESCE(p.code,''), COALESCE(p.name,'')
 			FROM departments d
 			LEFT JOIN user_departments ud ON ud.department_id=d.id AND ud.user_id=$2
 			LEFT JOIN department_positions p ON p.id=ud.position_id
-			WHERE d.organization_id=$1 ORDER BY d.name`, user.OrganizationID, user.ID)
+			WHERE d.organization_id=$1 AND d.archived_at IS NULL ORDER BY d.name`, user.OrganizationID, user.ID)
 		if err != nil {
 			httpapi.WriteError(w, http.StatusInternalServerError, "query_failed", "could not load departments")
 			return
@@ -135,11 +137,11 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 		rows = q
 	} else {
 		q, err := h.DB.Query(r.Context(), `
-			SELECT d.id, d.name, d.slug, ud.is_head, COALESCE(p.code,''), COALESCE(p.name,'')
+			SELECT d.id, d.name, d.slug, ud.is_head, ud.is_primary, COALESCE(p.code,''), COALESCE(p.name,'')
 			FROM departments d
 			JOIN user_departments ud ON ud.department_id=d.id
 			LEFT JOIN department_positions p ON p.id=ud.position_id
-			WHERE d.organization_id=$1 AND ud.user_id=$2
+			WHERE d.organization_id=$1 AND ud.user_id=$2 AND d.archived_at IS NULL
 			ORDER BY d.name`, user.OrganizationID, user.ID)
 		if err != nil {
 			httpapi.WriteError(w, http.StatusInternalServerError, "query_failed", "could not load departments")
@@ -151,7 +153,7 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 	items := make([]DepartmentWorkspace, 0)
 	for rows.Next() {
 		var item DepartmentWorkspace
-		if err := rows.Scan(&item.ID, &item.Name, &item.Slug, &item.IsHead, &item.PositionCode, &item.PositionName); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Slug, &item.IsHead, &item.IsPrimary, &item.PositionCode, &item.PositionName); err != nil {
 			httpapi.WriteError(w, http.StatusInternalServerError, "scan_failed", "could not read departments")
 			return
 		}
@@ -183,12 +185,12 @@ func (h Handler) resolve(ctx context.Context, user auth.SessionUser, deptID stri
 	wide := h.companyWide(ctx, user)
 	_ = SeedDepartmentPositions(ctx, h.DB, user.OrganizationID, deptID)
 	err := h.DB.QueryRow(ctx, `
-		SELECT d.id, d.name, d.slug, COALESCE(ud.is_head, FALSE), COALESCE(p.code,''), COALESCE(p.name,'')
+		SELECT d.id, d.name, d.slug, COALESCE(ud.is_head, FALSE), COALESCE(ud.is_primary, FALSE), COALESCE(p.code,''), COALESCE(p.name,'')
 		FROM departments d
 		LEFT JOIN user_departments ud ON ud.department_id=d.id AND ud.user_id=$3
 		LEFT JOIN department_positions p ON p.id=ud.position_id
-		WHERE d.id=$1 AND d.organization_id=$2`, deptID, user.OrganizationID, user.ID,
-	).Scan(&ws.ID, &ws.Name, &ws.Slug, &ws.IsHead, &ws.PositionCode, &ws.PositionName)
+		WHERE d.id=$1 AND d.organization_id=$2 AND d.archived_at IS NULL`, deptID, user.OrganizationID, user.ID,
+	).Scan(&ws.ID, &ws.Name, &ws.Slug, &ws.IsHead, &ws.IsPrimary, &ws.PositionCode, &ws.PositionName)
 	if err != nil {
 		return ws, false
 	}

@@ -157,6 +157,11 @@ export async function cacheSession(session: LocalSession) {
     [session.email, session.displayName, session.organization, session.role, session.cachedAt, JSON.stringify(session.permissions ?? [])]);
 }
 
+export async function clearSession() {
+  const db = await localDb();
+  await db.execute(`DELETE FROM local_session WHERE id = 1`);
+}
+
 export async function getCachedSession(): Promise<LocalSession | null> {
   const db = await localDb();
   const rows = await db.select<Array<Omit<LocalSession, "permissions"> & { permissions: string }>>(`SELECT email, display_name as displayName, organization, role, cached_at as cachedAt, permissions FROM local_session WHERE id = 1`);

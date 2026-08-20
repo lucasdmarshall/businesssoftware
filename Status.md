@@ -179,6 +179,7 @@ Completed in this milestone:
 - **Workflow production depth:** step SLA → instance `due_at`, upcoming/overdue reminder worker, time-boxed delegated approval coverage, set-deadline control — migration `035_workflow_delegation_reminders.sql`
 - **Finance depth:** AP/AR aging reports + bank reconciliation (accounts, statement lines, match/unmatch/exclude) — migration `036_finance_aging_bank_recon.sql`
 - **CRM pipeline production depth:** stage board + history, lead convert, contacts/activities suite tabs, live analytics sales summary — migration `037_crm_pipeline_production.sql`
+- **Core departments + credentials login:** default department catalog, username login, credential generator module (HR/IT by default), logout + auto-open home workspace — migration `038_core_departments_credentials_login.sql`
 
 Next actions:
 

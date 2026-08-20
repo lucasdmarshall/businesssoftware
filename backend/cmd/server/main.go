@@ -78,13 +78,17 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler(pool))
 	mux.HandleFunc("GET /api/v1/health", healthHandler(pool))
-	authHandler := auth.Handler{DB: pool}
+	authHandler := auth.Handler{DB: pool, OnOrganizationCreated: func(ctx context.Context, organizationID string) {
+		_ = workspace.SeedCoreDepartments(ctx, pool, organizationID)
+	}}
 	mux.Handle("GET /api/v1/organizations", authHandler.RequirePermission("organization.read", organizationsHandler(pool, authHandler)))
 	mux.Handle("POST /api/v1/organizations", authHandler.RequirePermission("organization.manage", organizationsHandler(pool, authHandler)))
 	mux.Handle("GET /api/v1/users", authHandler.RequirePermission("users.read", usersHandler(pool, authHandler)))
 	mux.Handle("POST /api/v1/users", authHandler.RequirePermission("users.manage", usersHandler(pool, authHandler)))
 	mux.Handle("GET /api/v1/departments", authHandler.RequirePermission("organization.read", departmentsHandler(pool, authHandler)))
 	mux.Handle("POST /api/v1/departments", authHandler.RequirePermission("organization.manage", departmentsHandler(pool, authHandler)))
+	mux.Handle("PATCH /api/v1/departments/{id}", authHandler.RequirePermission("organization.manage", http.HandlerFunc(updateDepartmentHandler(pool, authHandler))))
+	mux.Handle("DELETE /api/v1/departments/{id}", authHandler.RequirePermission("organization.manage", http.HandlerFunc(archiveDepartmentHandler(pool, authHandler))))
 	mux.Handle("GET /api/v1/user-departments", authHandler.RequirePermission("organization.read", listUserDepartmentsHandler(pool, authHandler)))
 	mux.Handle("POST /api/v1/user-departments", authHandler.RequirePermission("organization.manage", userDepartmentsHandler(pool, authHandler)))
 	mux.HandleFunc("GET /api/v1/setup/status", authHandler.SetupStatus)
@@ -202,6 +206,8 @@ func main() {
 	mux.HandleFunc("POST /api/v1/workspaces/departments/{id}/finance", workspaceHandler.Finance)
 	mux.HandleFunc("GET /api/v1/workspaces/departments/{id}/finance/summary", workspaceHandler.FinanceSummary)
 	mux.HandleFunc("POST /api/v1/workspaces/departments/{id}/finance/status", workspaceHandler.FinanceStatus)
+	mux.HandleFunc("POST /api/v1/workspaces/departments/{id}/credentials", workspaceHandler.GenerateCredentials)
+	mux.Handle("POST /api/v1/credentials/generate", authHandler.RequirePermission("users.manage", http.HandlerFunc(workspaceHandler.GenerateCredentials)))
 	financeHandler := finance.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/finance/overview", authHandler.RequirePermission("finance.read", http.HandlerFunc(financeHandler.Overview)))
 	mux.Handle("GET /api/v1/finance/accounts", authHandler.RequirePermission("finance.read", http.HandlerFunc(financeHandler.Accounts)))
@@ -395,6 +401,7 @@ func organizationsHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.Han
 type userRecord struct {
 	ID          string `json:"id"`
 	Email       string `json:"email"`
+	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
 	Status      string `json:"status"`
 }
@@ -413,7 +420,7 @@ func usersHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.HandlerFunc
 			return
 		}
 		if r.Method == http.MethodGet {
-			rows, err := pool.Query(r.Context(), `SELECT id, email, display_name, status FROM users WHERE organization_id = $1 ORDER BY display_name`, user.OrganizationID)
+			rows, err := pool.Query(r.Context(), `SELECT id, email, COALESCE(username,''), display_name, status FROM users WHERE organization_id = $1 ORDER BY display_name`, user.OrganizationID)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load users"})
 				return
@@ -422,7 +429,7 @@ func usersHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.HandlerFunc
 			users := make([]userRecord, 0)
 			for rows.Next() {
 				var item userRecord
-				if err := rows.Scan(&item.ID, &item.Email, &item.DisplayName, &item.Status); err != nil {
+				if err := rows.Scan(&item.ID, &item.Email, &item.Username, &item.DisplayName, &item.Status); err != nil {
 					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not read users"})
 					return
 				}
@@ -445,8 +452,9 @@ func usersHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.HandlerFunc
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		username := strings.Split(strings.ToLower(strings.TrimSpace(input.Email)), "@")[0]
 		var created userRecord
-		err = pool.QueryRow(r.Context(), `INSERT INTO users (organization_id, email, display_name, password_hash) VALUES ($1, lower($2), $3, $4) RETURNING id, email, display_name, status`, user.OrganizationID, strings.TrimSpace(input.Email), strings.TrimSpace(input.DisplayName), passwordHash).Scan(&created.ID, &created.Email, &created.DisplayName, &created.Status)
+		err = pool.QueryRow(r.Context(), `INSERT INTO users (organization_id, email, username, display_name, password_hash) VALUES ($1, lower($2), lower($3), $4, $5) RETURNING id, email, COALESCE(username,''), display_name, status`, user.OrganizationID, strings.TrimSpace(input.Email), username, strings.TrimSpace(input.DisplayName), passwordHash).Scan(&created.ID, &created.Email, &created.Username, &created.DisplayName, &created.Status)
 		if err != nil {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "user could not be created; email may already exist"})
 			return
@@ -456,9 +464,10 @@ func usersHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.HandlerFunc
 }
 
 type departmentRecord struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Slug string `json:"slug"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Slug   string `json:"slug"`
+	IsCore bool   `json:"is_core"`
 }
 
 type createDepartmentRequest struct {
@@ -473,8 +482,9 @@ func departmentsHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.Handl
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 			return
 		}
+		_ = workspace.SeedCoreDepartments(r.Context(), pool, user.OrganizationID)
 		if r.Method == http.MethodGet {
-			rows, err := pool.Query(r.Context(), `SELECT id, name, slug FROM departments WHERE organization_id = $1 ORDER BY name`, user.OrganizationID)
+			rows, err := pool.Query(r.Context(), `SELECT id, name, slug, is_core FROM departments WHERE organization_id = $1 AND archived_at IS NULL ORDER BY name`, user.OrganizationID)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load departments"})
 				return
@@ -483,7 +493,7 @@ func departmentsHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.Handl
 			departments := make([]departmentRecord, 0)
 			for rows.Next() {
 				var item departmentRecord
-				if err := rows.Scan(&item.ID, &item.Name, &item.Slug); err != nil {
+				if err := rows.Scan(&item.ID, &item.Name, &item.Slug, &item.IsCore); err != nil {
 					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not read departments"})
 					return
 				}
@@ -502,13 +512,66 @@ func departmentsHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.Handl
 			return
 		}
 		var created departmentRecord
-		err = pool.QueryRow(r.Context(), `INSERT INTO departments (organization_id, name, slug) VALUES ($1, $2, $3) RETURNING id, name, slug`, user.OrganizationID, strings.TrimSpace(input.Name), strings.TrimSpace(input.Slug)).Scan(&created.ID, &created.Name, &created.Slug)
+		err = pool.QueryRow(r.Context(), `INSERT INTO departments (organization_id, name, slug, is_core) VALUES ($1, $2, $3, FALSE) RETURNING id, name, slug, is_core`, user.OrganizationID, strings.TrimSpace(input.Name), strings.TrimSpace(input.Slug)).Scan(&created.ID, &created.Name, &created.Slug, &created.IsCore)
 		if err != nil {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "department could not be created; slug may already exist"})
 			return
 		}
 		_ = workspace.SeedDepartmentPositions(r.Context(), pool, user.OrganizationID, created.ID)
 		writeJSON(w, http.StatusCreated, created)
+	}
+}
+
+func updateDepartmentHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, err := authHandler.Authenticate(r)
+		if err != nil || pool == nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+			return
+		}
+		id := r.PathValue("id")
+		var input struct {
+			Name string `json:"name"`
+			Slug string `json:"slug"`
+		}
+		if json.NewDecoder(r.Body).Decode(&input) != nil || strings.TrimSpace(input.Name) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+			return
+		}
+		slug := strings.TrimSpace(input.Slug)
+		var updated departmentRecord
+		if slug == "" {
+			err = pool.QueryRow(r.Context(), `
+				UPDATE departments SET name=$1 WHERE id=$2 AND organization_id=$3 AND archived_at IS NULL
+				RETURNING id, name, slug, is_core`, strings.TrimSpace(input.Name), id, user.OrganizationID).Scan(&updated.ID, &updated.Name, &updated.Slug, &updated.IsCore)
+		} else {
+			err = pool.QueryRow(r.Context(), `
+				UPDATE departments SET name=$1, slug=$2 WHERE id=$3 AND organization_id=$4 AND archived_at IS NULL
+				RETURNING id, name, slug, is_core`, strings.TrimSpace(input.Name), slug, id, user.OrganizationID).Scan(&updated.ID, &updated.Name, &updated.Slug, &updated.IsCore)
+		}
+		if err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "could not update department"})
+			return
+		}
+		writeJSON(w, http.StatusOK, updated)
+	}
+}
+
+func archiveDepartmentHandler(pool *pgxpool.Pool, authHandler auth.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, err := authHandler.Authenticate(r)
+		if err != nil || pool == nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+			return
+		}
+		id := r.PathValue("id")
+		tag, err := pool.Exec(r.Context(), `
+			UPDATE departments SET archived_at=NOW() WHERE id=$1 AND organization_id=$2 AND archived_at IS NULL`, id, user.OrganizationID)
+		if err != nil || tag.RowsAffected() == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "department not found"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "archived"})
 	}
 }
 
