@@ -19,12 +19,10 @@ func (h Handler) GenerateCredentials(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		DisplayName     string `json:"display_name"`
-		DepartmentID    string `json:"department_id"`
-		Email           string `json:"email"`
-		IsHead          bool   `json:"is_head"`
-		MakePrimary     bool   `json:"is_primary"`
-		WorkspaceDeptID string `json:"-"`
+		DisplayName  string `json:"display_name"`
+		DepartmentID string `json:"department_id"`
+		Email        string `json:"email"`
+		IsHead       bool   `json:"is_head"`
 	}
 	if json.NewDecoder(r.Body).Decode(&input) != nil || strings.TrimSpace(input.DisplayName) == "" || strings.TrimSpace(input.DepartmentID) == "" {
 		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "display_name and department_id are required")
@@ -107,9 +105,6 @@ func (h Handler) GenerateCredentials(w http.ResponseWriter, r *http.Request) {
 		positionID = pid
 	}
 	primary := true
-	if !input.MakePrimary {
-		primary = true // first assignment is always primary for new hires
-	}
 	_, err = tx.Exec(r.Context(), `
 		INSERT INTO user_departments (user_id, department_id, is_primary, is_head, position_id)
 		VALUES ($1,$2,$3,$4,$5)
