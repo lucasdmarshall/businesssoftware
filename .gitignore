@@ -7,7 +7,14 @@ desktop/src-tauri/gen/
 data/backups/
 backend/data/
 
+# Compiled backend binaries
+backend/server.exe
+backend/server.exe~
+backend/server
+
+# Local editor / tooling config
+.claude/
+
 # Release build artifacts (installers). Keep release/README.md tracked.
 release/**
 !release/README.md
-

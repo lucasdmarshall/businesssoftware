@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -210,6 +211,24 @@ func (h Handler) Authenticate(r *http.Request) (SessionUser, error) {
 	return user, nil
 }
 
+// HasPermission reports whether a user holds a permission through any of their
+// roles. Used by handlers that must authorize an action mid-request rather than
+// at the route boundary (e.g. per-category checks on admin-managed lists).
+func (h Handler) HasPermission(ctx context.Context, user SessionUser, permission string) bool {
+	if h.DB == nil {
+		return false
+	}
+	var allowed bool
+	err := h.DB.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM user_roles ur
+			JOIN roles ro ON ro.id = ur.role_id
+			JOIN role_permissions rp ON rp.role_id = ro.id
+			WHERE ur.user_id = $1 AND ro.organization_id = $2 AND rp.permission_code = $3
+		)`, user.ID, user.OrganizationID, permission).Scan(&allowed)
+	return err == nil && allowed
+}
+
 func (h Handler) RequirePermission(permission string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, err := h.Authenticate(r)
@@ -247,7 +266,8 @@ func (h Handler) Me(w http.ResponseWriter, r *http.Request) {
 	tokenHash := hex.EncodeToString(hash[:])
 	var response userResponse
 	err = h.DB.QueryRow(r.Context(), `
-		SELECT u.id, u.display_name, u.email, u.organization_id, o.name, COALESCE(MIN(r.name), 'Member')
+		SELECT u.id, u.display_name, u.email, u.organization_id, o.name, COALESCE(MIN(r.name), 'Member'),
+			COALESCE(array_agg(DISTINCT rp.permission_code) FILTER (WHERE rp.permission_code IS NOT NULL), '{}')
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
 		JOIN organizations o ON o.id = u.organization_id
