@@ -216,13 +216,11 @@ func applyAttendance(tx pgx.Tx, organizationID, userID string, operation Operati
 		now := time.Now().UTC()
 		payload.At = &now
 	}
-	column := "check_in_at"
-	if operation.Action == "check_out" {
-		column = "check_out_at"
-	} else if operation.Action != "check_in" {
-		return fmt.Errorf("unsupported attendance operation")
+	column, err := AttendanceColumn(operation.Action)
+	if err != nil {
+		return err
 	}
-	_, err := tx.Exec(context.Background(), `INSERT INTO attendance_records (id, organization_id, user_id, work_date, `+column+`, note) VALUES (COALESCE(NULLIF($1, '')::uuid, gen_random_uuid()), $2, $3, $4, $5, $6) ON CONFLICT (organization_id, user_id, work_date) DO UPDATE SET `+column+` = EXCLUDED.`+column+`, note = EXCLUDED.note, updated_at = NOW()`, payload.ID, organizationID, userID, payload.WorkDate, payload.At, payload.Note)
+	_, err = tx.Exec(context.Background(), `INSERT INTO attendance_records (id, organization_id, user_id, work_date, `+column+`, note) VALUES (COALESCE(NULLIF($1, '')::uuid, gen_random_uuid()), $2, $3, $4, $5, $6) ON CONFLICT (organization_id, user_id, work_date) DO UPDATE SET `+column+` = EXCLUDED.`+column+`, note = EXCLUDED.note, updated_at = NOW()`, payload.ID, organizationID, userID, payload.WorkDate, payload.At, payload.Note)
 	return err
 }
 
@@ -257,14 +255,14 @@ func applyTask(tx pgx.Tx, organizationID, userID string, operation Operation) er
 			return tx.QueryRow(context.Background(), `INSERT INTO tasks (organization_id, created_by, title, description, status, priority, due_at, assigned_to, recurrence_rule, recurrence_next_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`, organizationID, userID, payload.Title, payload.Description, payload.Status, payload.Priority, payload.DueAt, payload.AssignedTo, payload.RecurrenceRule, payload.RecurrenceNextAt).Scan(new(string))
 		}
 		result, err := tx.Exec(context.Background(), `INSERT INTO tasks (id,organization_id,created_by,title,description,status,priority,due_at,assigned_to,recurrence_rule,recurrence_next_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (id) DO NOTHING`, payload.ID, organizationID, userID, payload.Title, payload.Description, payload.Status, payload.Priority, payload.DueAt, payload.AssignedTo, payload.RecurrenceRule, payload.RecurrenceNextAt)
-		if err == nil && result.RowsAffected() == 0 {
+		if err == nil && TaskCreateConflict(result.RowsAffected()) {
 			return ErrConflict
 		}
 		return err
 	}
 	if operation.Action == "update" && payload.ID != "" {
 		result, err := tx.Exec(context.Background(), `UPDATE tasks SET title=$1,description=$2,status=$3,priority=$4,due_at=$5,assigned_to=$6,recurrence_rule=$7,recurrence_next_at=$8,updated_at=NOW() WHERE id=$9 AND organization_id=$10`, payload.Title, payload.Description, payload.Status, payload.Priority, payload.DueAt, payload.AssignedTo, payload.RecurrenceRule, payload.RecurrenceNextAt, payload.ID, organizationID)
-		if err == nil && result.RowsAffected() == 0 {
+		if err == nil && TaskCreateConflict(result.RowsAffected()) {
 			return ErrConflict
 		}
 		return err

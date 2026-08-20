@@ -82,7 +82,16 @@ keep-mine / keep-server actions.
 
 ## Manual offline test
 
-Until an automated device-offline harness exists, verify manually:
+Automated coverage lives in:
+
+- `frontend/src/offline-harness.test.ts` — device outbox policy, push status
+  transitions, attendance work-date merge, tombstone pull application
+- `backend/internal/sync/policy_test.go` — server offline policy, payload
+  validation, conflict classification
+
+CI runs both suites on every push (`npm test`, `go test ./...`).
+
+For a full end-to-end check on a packaged desktop build:
 
 1. Sign in while online so the session and caches populate.
 2. Stop the backend (or disconnect) to simulate device-offline mode.

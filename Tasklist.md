@@ -184,7 +184,7 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Define attendance offline rules (docs/OFFLINE_RULES.md)
 - [x] Define finance and permission server-authoritative rules (docs/OFFLINE_RULES.md)
 - [x] Add offline conflict review UI (Work screen sync conflicts panel)
-- [-] Test offline mode without internet access (manual test steps documented; automated device-offline harness pending)
+- [x] Test offline mode without internet access (automated device-offline harness + documented desktop E2E steps)
 
 ## Phase 7 — Business Modules
 
@@ -288,7 +288,7 @@ LukeLang is compiled and bundled into the product; customers never install it.
 
 - [ ] Security review
 - [ ] RBAC penetration tests
-- [ ] Offline and conflict tests
+- [x] Offline and conflict tests
 - [ ] Backup and restore verification
 - [ ] Database migration rollback verification
 - [ ] Performance tests

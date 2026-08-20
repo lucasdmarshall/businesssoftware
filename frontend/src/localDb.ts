@@ -1,4 +1,5 @@
 import Database from "@tauri-apps/plugin-sql";
+import { applyPushResponse } from "./offline-harness";
 import { hasId, mapRemoteLeave, mapRemoteShift, mapRemoteTask, type RemoteOperation } from "./sync-transform";
 
 export type LocalSession = {
@@ -265,7 +266,7 @@ export async function pullRemoteChanges(apiBase: string) {
 
 export async function syncPendingOperations(apiBase: string) {
   const operations = await getPendingOperations();
-  if (!operations.length) return { synced: 0 };
+  if (!operations.length) return { synced: 0, failed: 0, conflicts: 0 };
   const response = await fetch(`${apiBase}/sync/push`, {
     method: "POST",
     credentials: "include",
@@ -274,9 +275,12 @@ export async function syncPendingOperations(apiBase: string) {
   });
   if (!response.ok) throw new Error("sync failed");
   const result = await response.json() as { accepted: string[]; duplicates: string[]; rejected?: string[]; conflicts?: string[] };
-  const synced = [...(result.accepted ?? []), ...(result.duplicates ?? [])];
+  const statuses = applyPushResponse(operations.map((item) => item.id), result);
+  const synced = [...statuses.entries()].filter(([, status]) => status === "synced").map(([id]) => id);
+  const failed = [...statuses.entries()].filter(([, status]) => status === "failed").map(([id]) => id);
+  const conflicts = [...statuses.entries()].filter(([, status]) => status === "conflict").map(([id]) => id);
   await markOperationsSynced(synced);
-  await markOperationsFailed(result.rejected ?? []);
-  await markOperationsConflict(result.conflicts ?? []);
-  return { synced: synced.length, failed: (result.rejected ?? []).length, conflicts: (result.conflicts ?? []).length };
+  await markOperationsFailed(failed);
+  await markOperationsConflict(conflicts);
+  return { synced: synced.length, failed: failed.length, conflicts: conflicts.length };
 }
