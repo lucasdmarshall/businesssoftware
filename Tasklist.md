@@ -203,9 +203,9 @@ This is the master implementation checklist for the installable enterprise busin
 ### Finance
 
 - [x] Expenses (draft, submit-for-approval, mark paid)
-- [ ] Invoices
-- [ ] Budgets
-- [ ] Purchase requests
+- [x] Invoices (draft, submit-for-approval, mark paid)
+- [x] Budgets (periods with committed spend from expenses and purchase requests)
+- [x] Purchase requests (draft, submit-for-approval, mark ordered)
 - [x] Vendors
 - [x] Finance approvals (routed through the generic workflow engine)
 
