@@ -76,6 +76,22 @@ position defines what you can do; exceptions are rare overrides.
 Department calendars are department-scoped **and** may include events marked
 `visibility = organization` so company-wide announcements still surface.
 
+## Data isolation (query scoping)
+
+Operational screens opened inside a department workspace pass
+`?department_id=<uuid>` to the shared APIs. The server requires the caller to
+be able to enter that workspace, then filters rows to people in
+`user_departments` for that department:
+
+- Leave list + balances  
+- Attendance organization desk / people / today rollup  
+- Tasks (exact department; assignee list uses department members)  
+- Activity / audit trail (actors in the department, or metadata/entity scoped)
+
+People → **Department membership** assigns `user_departments` (with head flag)
+via `POST /api/v1/user-departments`. Access Control “Make head” updates
+`is_head` + position.
+
 ## Mapping to today’s code
 
 - Department switcher → enter a workspace  
