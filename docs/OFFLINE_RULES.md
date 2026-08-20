@@ -58,8 +58,12 @@ local cache and outbox for device-offline mode.
 - On sync, leave creates re-validate date range and overlap; insufficient
   balance or overlapping leave fails the outbox item rather than bypassing
   server rules.
+- On sync, shift creates re-validate time range, person overlap, and approved
+  leave on that date — conflicts fail the outbox item.
 - Approvals, rejections, cancellations of approved leave, balance edits, and
   policy changes are **not** offline actions (see below).
+- Shift confirm / complete / cancel status changes are **server-side** (not
+  queued offline).
 - When leave is approved on the server, attendance rows for those dates are
   marked `leave` and a calendar event is created — those side effects only run
   server-side.
