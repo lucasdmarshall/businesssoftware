@@ -14,6 +14,7 @@ import (
 	"name/backend/internal/auth"
 	"name/backend/internal/calendar"
 	"name/backend/internal/config"
+	"name/backend/internal/dashboard"
 	"name/backend/internal/database"
 	"name/backend/internal/httpapi"
 	"name/backend/internal/leave"
@@ -142,7 +143,12 @@ func main() {
 	mux.Handle("POST /api/v1/user-placement", authHandler.RequirePermission("organization.manage", http.HandlerFunc(orgStructureHandler.AssignPlacement)))
 	mux.Handle("GET /api/v1/reporting-lines", authHandler.RequirePermission("organization.read", http.HandlerFunc(orgStructureHandler.ReportingLines)))
 	mux.Handle("POST /api/v1/reporting-lines", authHandler.RequirePermission("organization.manage", http.HandlerFunc(orgStructureHandler.ReportingLines)))
+	mux.Handle("GET /api/v1/teams", authHandler.RequirePermission("organization.read", http.HandlerFunc(orgStructureHandler.Teams)))
+	mux.Handle("POST /api/v1/teams", authHandler.RequirePermission("organization.manage", http.HandlerFunc(orgStructureHandler.Teams)))
+	mux.Handle("POST /api/v1/user-teams", authHandler.RequirePermission("organization.manage", http.HandlerFunc(orgStructureHandler.AssignTeam)))
 	mux.Handle("GET /api/v1/files", authHandler.RequirePermission("organization.read", http.HandlerFunc(orgStructureHandler.Files)))
+	dashboardHandler := dashboard.Handler{DB: pool, Auth: authHandler}
+	mux.HandleFunc("GET /api/v1/dashboard/summary", dashboardHandler.Summary)
 	workflowHandler := workflow.Handler{DB: pool, Auth: authHandler}
 	mux.Handle("GET /api/v1/workflow/definitions", authHandler.RequirePermission("workflow.read", http.HandlerFunc(workflowHandler.Definitions)))
 	mux.Handle("POST /api/v1/workflow/definitions", authHandler.RequirePermission("workflow.manage", http.HandlerFunc(workflowHandler.CreateDefinition)))

@@ -248,6 +248,96 @@ func (h Handler) Files(w http.ResponseWriter, r *http.Request) {
 	httpapi.WriteJSON(w, http.StatusOK, items)
 }
 
+type Team struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Slug         string `json:"slug"`
+	DepartmentID string `json:"department_id"`
+	MemberCount  int    `json:"member_count"`
+}
+
+// Teams lists (GET) or creates (POST) teams for the organization.
+func (h Handler) Teams(w http.ResponseWriter, r *http.Request) {
+	user, err := h.Auth.Authenticate(r)
+	if err != nil || h.DB == nil {
+		httpapi.WriteError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return
+	}
+	if r.Method == http.MethodGet {
+		rows, err := h.DB.Query(r.Context(), `SELECT t.id, t.name, t.slug, COALESCE(t.department_id::text,''), (SELECT COUNT(*) FROM user_teams ut WHERE ut.team_id=t.id) FROM teams t WHERE t.organization_id=$1 ORDER BY t.name`, user.OrganizationID)
+		if err != nil {
+			httpapi.WriteError(w, http.StatusInternalServerError, "query_failed", "could not load teams")
+			return
+		}
+		defer rows.Close()
+		items := make([]Team, 0)
+		for rows.Next() {
+			var item Team
+			if err := rows.Scan(&item.ID, &item.Name, &item.Slug, &item.DepartmentID, &item.MemberCount); err != nil {
+				httpapi.WriteError(w, http.StatusInternalServerError, "scan_failed", "could not read teams")
+				return
+			}
+			items = append(items, item)
+		}
+		httpapi.WriteJSON(w, http.StatusOK, items)
+		return
+	}
+	var input struct {
+		Name         string `json:"name"`
+		Slug         string `json:"slug"`
+		DepartmentID string `json:"department_id"`
+	}
+	if json.NewDecoder(r.Body).Decode(&input) != nil || strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.Slug) == "" {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "name and slug are required")
+		return
+	}
+	var departmentID any
+	if strings.TrimSpace(input.DepartmentID) != "" {
+		departmentID = input.DepartmentID
+	}
+	var created Team
+	err = h.DB.QueryRow(r.Context(), `
+		INSERT INTO teams (organization_id, name, slug, department_id)
+		SELECT $1,$2,$3,$4
+		WHERE $4::uuid IS NULL OR EXISTS (SELECT 1 FROM departments d WHERE d.id=$4 AND d.organization_id=$1)
+		RETURNING id, name, slug, COALESCE(department_id::text,'')`, user.OrganizationID, strings.TrimSpace(input.Name), strings.TrimSpace(input.Slug), departmentID).
+		Scan(&created.ID, &created.Name, &created.Slug, &created.DepartmentID)
+	if err != nil {
+		httpapi.WriteError(w, http.StatusConflict, "conflict", "team slug may already exist")
+		return
+	}
+	h.audit(r, user, "team.created", "team", created.ID)
+	httpapi.WriteJSON(w, http.StatusCreated, created)
+}
+
+// AssignTeam adds a user to a team (both must belong to the caller's org).
+func (h Handler) AssignTeam(w http.ResponseWriter, r *http.Request) {
+	user, err := h.Auth.Authenticate(r)
+	if err != nil || h.DB == nil {
+		httpapi.WriteError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return
+	}
+	var input struct {
+		UserID string `json:"user_id"`
+		TeamID string `json:"team_id"`
+	}
+	if json.NewDecoder(r.Body).Decode(&input) != nil || input.UserID == "" || input.TeamID == "" {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "user_id and team_id are required")
+		return
+	}
+	result, err := h.DB.Exec(r.Context(), `
+		INSERT INTO user_teams (user_id, team_id)
+		SELECT u.id, t.id FROM users u JOIN teams t ON t.organization_id=u.organization_id
+		WHERE u.id=$1 AND t.id=$2 AND u.organization_id=$3
+		ON CONFLICT DO NOTHING`, input.UserID, input.TeamID, user.OrganizationID)
+	if err != nil || result.RowsAffected() == 0 {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_membership", "user or team does not belong to this organization")
+		return
+	}
+	h.audit(r, user, "team.member_added", "team", input.TeamID)
+	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"status": "assigned"})
+}
+
 func (h Handler) audit(r *http.Request, user auth.SessionUser, action, entityType, entityID string) {
 	_, _ = h.DB.Exec(r.Context(), `INSERT INTO audit_logs (organization_id, actor_id, action, entity_type, entity_id) VALUES ($1,$2,$3,$4,$5)`, user.OrganizationID, user.ID, action, entityType, entityID)
 }

@@ -94,7 +94,7 @@ This is the master implementation checklist for the installable enterprise busin
 - [x] Implement data scopes: own, department, organization foundation
 - [x] Add user-department membership model and assignment endpoint
 - [x] Add task scope selector in Work UI
-- [ ] Implement team scope and scope-aware dashboards
+- [x] Implement team scope and scope-aware dashboards (user_teams membership, team task scope, scope-aware dashboard summary)
 - [x] Add backend authorization middleware
 - [x] Add permission checks for organization, user, and department endpoints
 - [x] Add permission-change audit history (role assign/unassign and RBAC events recorded)
@@ -229,12 +229,12 @@ This is the master implementation checklist for the installable enterprise busin
 
 ## Phase 8 — Analytics and Executive Control
 
-- [ ] Define KPI model
-- [ ] Define dashboard data permissions
-- [ ] Add department dashboards
-- [ ] Add executive dashboard
-- [ ] Add delayed-work alerts
-- [ ] Add approval bottleneck alerts
+- [x] Define KPI model (dashboard summary metrics foundation)
+- [x] Define dashboard data permissions (own/team/department/organization scope-aware)
+- [x] Add department dashboards (open work per department breakdown)
+- [x] Add executive dashboard (organization-scope summary)
+- [x] Add delayed-work alerts (overdue task metric)
+- [x] Add approval bottleneck alerts (approvals-waiting metric)
 - [ ] Add spending summaries
 - [ ] Add attendance summaries
 - [ ] Add sales summaries

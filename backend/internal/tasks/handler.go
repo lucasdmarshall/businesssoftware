@@ -62,14 +62,18 @@ func (h Handler) List(w http.ResponseWriter, r *http.Request) {
 	if scope == "" {
 		scope = "organization"
 	}
-	if scope != "own" && scope != "department" && scope != "organization" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "scope must be own, department, or organization"})
+	if scope != "own" && scope != "team" && scope != "department" && scope != "organization" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "scope must be own, team, department, or organization"})
 		return
 	}
 	filter := `t.organization_id = $1`
 	args := []any{user.OrganizationID}
 	if scope == "own" {
 		filter += ` AND (t.created_by = $2 OR t.assigned_to = $2)`
+		args = append(args, user.ID)
+	}
+	if scope == "team" {
+		filter += ` AND EXISTS (SELECT 1 FROM user_teams current_ut JOIN user_teams target_ut ON target_ut.team_id=current_ut.team_id WHERE current_ut.user_id=$2 AND target_ut.user_id=COALESCE(t.assigned_to,t.created_by))`
 		args = append(args, user.ID)
 	}
 	if scope == "department" {

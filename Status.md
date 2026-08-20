@@ -155,6 +155,8 @@ Completed in this milestone:
 - Phase 4 shared work management: project model (with task project links), calendar events with time-conflict detection, the platform notifications service, and the backup-gated attachment retention worker (migration `017_projects_calendar_notifications.sql`)
 - Notifications flow end to end: shared `internal/notify` emit helper, a per-user notifications API, a topbar bell with unread badge, and workflow approve/reject emitting to the submitter
 - Frontend gained Projects and Calendar views (calendar create surfaces overlap conflicts); calendar `Overlaps` helper is unit tested alongside the growing Go test suite
+- Team scope and scope-aware dashboards: `user_teams` membership (migration `018_user_teams.sql`), a team task scope, teams list/create and team-assignment APIs, and a `dashboard/summary` endpoint returning own/team/department/organization metrics (open/overdue/in-progress tasks, approvals waiting, upcoming events, unread notifications) with an open-work-per-department breakdown
+- Overview now renders a live, scope-selectable dashboard instead of placeholder numbers; Work gained a Team task scope option
 
 Next actions:
 

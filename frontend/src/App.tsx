@@ -1,10 +1,9 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import {
   Activity,
   ArrowUpRight,
   Bell,
   BriefcaseBusiness,
-  CheckCircle2,
   ChevronDown,
   CircleHelp,
   ClipboardCheck,
@@ -211,22 +210,7 @@ function App() {
             <span><strong>{organizations[0]?.name ?? currentUser?.organization ?? "Company setup"}</strong><small>{systemHealth.status === "ok" ? `Backend connected · PostgreSQL ${systemHealth.database}` : "Start the local backend to connect this workspace"}</small></span>
           </div>
 
-          <div className="metric-grid">
-            <Metric label="Open work" value="24" change="+8.4%" detail="from last week" />
-            <Metric label="People active" value="18" change="+3" detail="this morning" />
-            <Metric label="Approvals" value="07" change="2 urgent" detail="need your attention" warning />
-          </div>
-
-          <div className="section-heading">
-            <div><p className="eyebrow">Today</p><h2>Keep the company moving.</h2></div>
-            <button className="text-button" type="button">View activity <ArrowUpRight size={15} /></button>
-          </div>
-
-          <div className="activity-list">
-            <ActivityRow icon={<CheckCircle2 size={18} />} title="Platform foundation is ready to begin" detail="Engineering · just now" />
-            <ActivityRow icon={<BriefcaseBusiness size={18} />} title="Architecture decision recorded" detail="Workspace · 12 minutes ago" />
-            <ActivityRow icon={<UsersRound size={18} />} title="Organization structure is waiting for setup" detail="People · 24 minutes ago" />
-          </div>
+          <DashboardOverview />
         </section>}
       </main>
 
@@ -327,7 +311,7 @@ function WorkView() {
     <div className="page-heading"><div><p className="eyebrow">Work</p><h1>Keep work moving.</h1><p className="lede">Tasks stay available on this device, even when the company server is offline.</p></div></div>
     {message && <p className="inline-message">{message}</p>}
     <form className="task-composer" onSubmit={createTask}><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What needs to get done?" required /><select value={priority} onChange={(event) => setPriority(event.target.value)}><option value="low">Low priority</option><option value="normal">Normal priority</option><option value="high">High priority</option><option value="urgent">Urgent</option></select><input type="date" value={dueAt} onChange={(event) => setDueAt(event.target.value)} /><select value={assignedTo} onChange={(event) => setAssignedTo(event.target.value)}><option value="">Assign to me</option>{users.map((user) => <option key={user.id} value={user.id}>{user.display_name}</option>)}</select><select value={recurrenceRule} onChange={(event) => setRecurrenceRule(event.target.value)}><option value="">No repeat</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : "Add task"}</button></form>
-    <div className="section-heading task-heading"><div><p className="eyebrow">Queue</p><h2>{tasks.length} tasks</h2></div><select className="scope-select" value={taskScope} onChange={(event) => setTaskScope(event.target.value)}><option value="own">My tasks</option><option value="department">Department tasks</option><option value="organization">All company tasks</option></select></div>
+    <div className="section-heading task-heading"><div><p className="eyebrow">Queue</p><h2>{tasks.length} tasks</h2></div><select className="scope-select" value={taskScope} onChange={(event) => setTaskScope(event.target.value)}><option value="own">My tasks</option><option value="team">Team tasks</option><option value="department">Department tasks</option><option value="organization">All company tasks</option></select></div>
     <div className="task-list">{tasks.map((task) => { const syncStatus = outboxStatuses.get(task.id); return <div key={task.id}><div className="task-row"><span className={`task-status ${task.status}`} /><span className="record-copy"><strong>{task.title}</strong><small>{task.priority} priority · {task.dueAt ? `due ${task.dueAt.slice(0, 10)} · ` : ""}{task.assignedTo ? "assigned" : "unassigned"} · {syncStatus === "conflict" ? "server conflict" : syncStatus === "failed" ? "sync failed" : syncStatus === "pending" ? "waiting to sync" : "synced"}</small></span><button className="text-button" type="button" onClick={() => void openComments(task.id)}>Comments</button>{syncStatus === "failed" || syncStatus === "conflict" ? <span className="task-actions"><button className="text-button" type="button" onClick={() => void retryTask(task.id)}>Retry</button>{syncStatus === "conflict" && <button className="text-button muted" type="button" onClick={() => void discardTask(task.id)}>Discard</button>}</span> : <span className={`status-pill priority-${task.priority}`}>{task.status.replace("_", " ")}</span>}</div>{commentTaskId === task.id && <div className="comment-thread">{comments.map((comment) => <p key={comment.id}><strong>{comment.author_name}</strong> {comment.body}</p>)}<form onSubmit={addComment}><input value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder="Write a comment or @mention someone" /><button className="text-button" type="submit">Post</button></form></div>}</div>; })}</div>
   </section>;
 }
@@ -407,6 +391,45 @@ function ActivityView() {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   useEffect(() => { void fetch(`${apiBase}/audit-logs`, { credentials: "include" }).then((response) => response.ok ? response.json() : []).then(setEntries).catch(() => setEntries([])); }, []);
   return <section className="content-wrap"><div className="page-heading"><div><p className="eyebrow">Activity</p><h1>Know what changed.</h1><p className="lede">A durable record of privileged actions in this private installation.</p></div></div><div className="section-heading task-heading"><div><p className="eyebrow">Audit trail</p><h2>{entries.length} events</h2></div></div><div className="activity-list">{entries.map((entry) => <div className="activity-row" key={entry.id}><span className="activity-icon"><Activity size={16} /></span><span className="activity-copy"><strong>{entry.action}</strong><small>{entry.actor_name} · {entry.entity_type} · {new Date(entry.created_at).toLocaleString()}</small></span></div>)}</div></section>;
+}
+
+type DashboardSummary = { scope: string; open_tasks: number; in_progress_tasks: number; overdue_tasks: number; done_tasks: number; approvals_waiting: number; upcoming_events: number; unread_notifications: number; department_breakdown: Array<{ department: string; open_tasks: number }> };
+
+function DashboardOverview() {
+  const [scope, setScope] = useState("organization");
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const response = await fetch(`${apiBase}/dashboard/summary?scope=${scope}`, { credentials: "include" });
+      if (response.ok && active) setSummary(await response.json());
+    })();
+    return () => { active = false; };
+  }, [scope]);
+
+  const showBreakdown = (scope === "organization" || scope === "department") && (summary?.department_breakdown?.length ?? 0) > 0;
+
+  return <>
+    <div className="section-heading" style={{ marginTop: 34 }}>
+      <div><p className="eyebrow">Dashboard</p><h2>Where things stand.</h2></div>
+      <select className="scope-select" value={scope} onChange={(event) => setScope(event.target.value)} aria-label="Dashboard scope">
+        <option value="own">My work</option>
+        <option value="team">My team</option>
+        <option value="department">My department</option>
+        <option value="organization">Whole company</option>
+      </select>
+    </div>
+    <div className="metric-grid">
+      <Metric label="Open work" value={String(summary?.open_tasks ?? 0)} change={`${summary?.in_progress_tasks ?? 0} in progress`} detail="tasks not yet done" />
+      <Metric label="Overdue" value={String(summary?.overdue_tasks ?? 0)} change={summary && summary.overdue_tasks > 0 ? "needs attention" : "on track"} detail="past their due date" warning={Boolean(summary && summary.overdue_tasks > 0)} />
+      <Metric label="Approvals waiting" value={String(summary?.approvals_waiting ?? 0)} change={`${summary?.upcoming_events ?? 0} events soon`} detail="need your decision" warning={Boolean(summary && summary.approvals_waiting > 0)} />
+    </div>
+    {showBreakdown && <>
+      <div className="section-heading"><div><p className="eyebrow">By department</p><h2>Open work across the company.</h2></div></div>
+      <div className="record-list">{summary!.department_breakdown.map((row) => <div className="record-row" key={row.department}><span className="record-avatar department-avatar"><BriefcaseBusiness size={15} /></span><span className="record-copy"><strong>{row.department}</strong><small>{row.open_tasks} open {row.open_tasks === 1 ? "task" : "tasks"}</small></span><span className="status-pill">{row.open_tasks}</span></div>)}</div>
+    </>}
+  </>;
 }
 
 function NotificationBell() {
@@ -791,10 +814,6 @@ function Metric({ label, value, change, detail, warning = false }: { label: stri
     <div><p className="metric-label">{label}</p><strong className="metric-value">{value}</strong></div>
     <div className={`metric-change ${warning ? "warning" : ""}`}>{change}<small>{detail}</small></div>
   </div>;
-}
-
-function ActivityRow({ icon, title, detail }: { icon: ReactNode; title: string; detail: string }) {
-  return <div className="activity-row"><span className="activity-icon">{icon}</span><span className="activity-copy"><strong>{title}</strong><small>{detail}</small></span><ArrowUpRight size={16} /></div>;
 }
 
 export default App;
